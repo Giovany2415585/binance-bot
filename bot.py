@@ -37,10 +37,8 @@ def fmt_time(ms: int) -> str:
 # ── Fetch transactions ─────────────────────────────────────────
 def fetch_deposits(since_ms: int) -> list:
     try:
-        data = binance_get("/sapi/v1/asset/dribblet", {"startTime": since_ms, "limit": 50})
-        if isinstance(data, dict):
-            return data.get("userAssetDribblets", [])
-        return []
+        data = binance_get("/sapi/v1/capital/deposit/hisrec", {"startTime": since_ms, "limit": 50, "status": 1})
+        return data if isinstance(data, list) else []
     except Exception as e:
         print(f"[deposits error] {e}")
         return []
