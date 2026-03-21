@@ -32,6 +32,11 @@ def binance_get(path, params):
     r.raise_for_status()
     return r.json()
 
+def binance_public(path, params={}):
+    r = requests.get(BASE_URL + path, params=params, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
@@ -57,15 +62,49 @@ def fetch_pay_transactions(since_ms, limit=50):
         print(f"[pay error] {e}")
         return []
 
-def fetch_balance():
+def fetch_btc_price():
     try:
-        data = binance_get("/sapi/v1/asset/getUserAsset", {"needBtcValuation": "false"})
+        data = binance_public("/api/v3/ticker/price", {"symbol": "BTCUSDT"})
+        return float(data.get("price", 0))
+    except:
+        return 0
+
+def fetch_wallet_balance():
+    try:
+        data = binance_get("/sapi/v1/asset/wallet/balance", {})
         if isinstance(data, list):
-            return [b for b in data if float(b.get("free", 0)) > 0]
+            return [b for b in data if float(b.get("balance", 0)) > 0]
         return []
     except Exception as e:
         print(f"[balance error] {e}")
         return []
+
+def cmd_balance():
+    wallets = fetch_wallet_balance()
+    btc_price = fetch_btc_price()
+
+    if not wallets:
+        return "❌ No se pudo obtener el balance."
+
+    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
+    total_usdt = 0.0
+
+    for w in wallets:
+        nombre  = w.get("walletName", w.get("walletType", "?"))
+        btc_val = float(w.get("walletBtc", 0))
+        usdt_val = btc_val * btc_price if btc_price > 0 else 0
+        total_usdt += usdt_val
+        lines.append(
+            f"💳 <b>{nombre}</b>\n"
+            f"   {btc_val:.8f} BTC  ≈  <b>{usdt_val:.2f} USDT</b>"
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━")
+    lines.append(f"💰 <b>Total: ≈ {total_usdt:.2f} USDT</b>")
+    if btc_price > 0:
+        lines.append(f"📈 BTC/USDT: ${btc_price:,.2f}")
+
+    return "\n".join(lines)
 
 def is_incoming(t):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
@@ -116,7 +155,7 @@ def cmd_ayuda():
         "━━━━━━━━━━━━━━━━━━\n"
         "/ultimo — Último pago recibido\n"
         "/ultimos5 — Últimos 5 movimientos\n"
-        "/balance — Saldo actual\n"
+        "/balance — Saldo actual en USDT\n"
         "/recibidos — Últimos pagos recibidos\n"
         "/enviados — Últimos pagos enviados\n"
         "/on — Activar notificaciones\n"
@@ -125,19 +164,6 @@ def cmd_ayuda():
         "/limpiar — Borrar historial\n"
         "/ayuda — Ver esta lista"
     )
-
-def cmd_balance():
-    balances = fetch_balance()
-    if not balances:
-        return "❌ No se pudo obtener el balance."
-    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
-    for b in balances[:15]:
-        moneda = b.get("asset", "?")
-        libre  = float(b.get("free", 0))
-        bloq   = float(b.get("locked", 0))
-        total  = libre + bloq
-        lines.append(f"🪙 <b>{moneda}</b>: {total:.6f}")
-    return "\n".join(lines)
 
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
