@@ -7,6 +7,7 @@ import threading
 import json
 from datetime import datetime
 
+# ── Configuración ──────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "8622111444:AAHKYOFrIAFGvPdhHlev6UwfNoKtUFsS93o")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5800355077")
 BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "Y5Cw2JrhUeDhSkKVE5cE36Dd715ggI1k3k4lFkjX8wKAhn4kn6EHY6XguO3iiy6g")
@@ -29,11 +30,6 @@ def binance_get(path, params):
     params["signature"] = sign(params)
     headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
     r = requests.get(BASE_URL + path, params=params, headers=headers, timeout=10)
-    r.raise_for_status()
-    return r.json()
-
-def binance_public(path, params={}):
-    r = requests.get(BASE_URL + path, params=params, timeout=10)
     r.raise_for_status()
     return r.json()
 
@@ -62,49 +58,13 @@ def fetch_pay_transactions(since_ms, limit=50):
         print(f"[pay error] {e}")
         return []
 
-def fetch_btc_price():
+def fetch_balance():
     try:
-        data = binance_public("/api/v3/ticker/price", {"symbol": "BTCUSDT"})
-        return float(data.get("price", 0))
-    except:
-        return 0
-
-def fetch_wallet_balance():
-    try:
-        data = binance_get("/sapi/v1/asset/wallet/balance", {})
-        if isinstance(data, list):
-            return [b for b in data if float(b.get("balance", 0)) > 0]
-        return []
+        data = binance_get("/sapi/v1/asset/balance", {"asset": "USDT"})
+        return [data] if data and float(data.get("free", 0)) + float(data.get("locked", 0)) > 0 else []
     except Exception as e:
         print(f"[balance error] {e}")
         return []
-
-def cmd_balance():
-    wallets = fetch_wallet_balance()
-    btc_price = fetch_btc_price()
-
-    if not wallets:
-        return "❌ No se pudo obtener el balance."
-
-    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
-    total_usdt = 0.0
-
-    for w in wallets:
-        nombre  = w.get("walletName", w.get("walletType", "?"))
-        btc_val = float(w.get("walletBtc", 0))
-        usdt_val = btc_val * btc_price if btc_price > 0 else 0
-        total_usdt += usdt_val
-        lines.append(
-            f"💳 <b>{nombre}</b>\n"
-            f"   {btc_val:.8f} BTC  ≈  <b>{usdt_val:.2f} USDT</b>"
-        )
-
-    lines.append("━━━━━━━━━━━━━━━━━━")
-    lines.append(f"💰 <b>Total: ≈ {total_usdt:.2f} USDT</b>")
-    if btc_price > 0:
-        lines.append(f"📈 BTC/USDT: ${btc_price:,.2f}")
-
-    return "\n".join(lines)
 
 def is_incoming(t):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
@@ -164,6 +124,21 @@ def cmd_ayuda():
         "/limpiar — Borrar historial\n"
         "/ayuda — Ver esta lista"
     )
+
+def cmd_balance():
+    balances = fetch_balance()
+    if not balances:
+        return "❌ No se pudo obtener el balance."
+    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
+    for b in balances:
+        libre     = float(b.get("free", 0))
+        bloqueado = float(b.get("locked", 0))
+        total     = libre + bloqueado
+        lines.append(f"🪙 <b>USDT disponible:</b> {libre:.2f}")
+        if bloqueado > 0:
+            lines.append(f"🔒 <b>USDT bloqueado:</b> {bloqueado:.2f}")
+        lines.append(f"💰 <b>USDT total:</b> {total:.2f}")
+    return "\n".join(lines)
 
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
