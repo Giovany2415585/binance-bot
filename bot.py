@@ -60,13 +60,23 @@ def fetch_pay_transactions(since_ms, limit=50):
 
 def fetch_balance():
     try:
-        data = binance_get("/sapi/v1/capital/config/getall", {})
-        if isinstance(data, list):
-            return [b for b in data if float(b.get("balance", 0)) > 0]
-        return []
+        data = binance_get("/api/v3/account", {})
+        balances = data.get("balances", [])
+        return [b for b in balances if float(b.get("free", 0)) > 0 or float(b.get("locked", 0)) > 0]
     except Exception as e:
         print(f"[balance error] {e}")
         return []
+
+def cmd_balance():
+    balances = fetch_balance()
+    if not balances:
+        return "❌ No se pudo obtener el balance."
+    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
+    for b in balances[:15]:
+        moneda = b.get("asset", "?")
+        libre  = float(b.get("free", 0))
+        lines.append(f"🪙 <b>{moneda}</b>: {libre:.6f}")
+    return "\n".join(lines)
 
 def is_incoming(t):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
