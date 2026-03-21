@@ -12,17 +12,20 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "8622111444:AAHKYOFrIAFGvPdhHle
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5800355077")
 BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "Y5Cw2JrhUeDhSkKVE5cE36Dd715ggI1k3k4lFkjX8wKAhn4kn6EHY6XguO3iiy6g")
 BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "LVB0ZL2LdhKLri6t03SPAiWIjvpAn2QR13znhe8TeGHbWYakBn1Y26r88fVUsFrj")
-MY_UID           = "518173796"  # Tu UID de Binance
+MY_UID           = "518173796"
 
 POLL_INTERVAL = 10
 BASE_URL      = "https://api.binance.com"
 
-# ── Helpers Binance ────────────────────────────────────────────
-def sign(params: dict) -> str:
+bot_activo = True
+seen       = set()
+lock       = threading.Lock()
+
+def sign(params):
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return hmac.new(BINANCE_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-def binance_get(path: str, params: dict) -> dict:
+def binance_get(path, params):
     params["timestamp"] = int(time.time() * 1000)
     params["signature"] = sign(params)
     headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
@@ -30,24 +33,22 @@ def binance_get(path: str, params: dict) -> dict:
     r.raise_for_status()
     return r.json()
 
-# ── Helpers Telegram ───────────────────────────────────────────
-def send_telegram(text: str):
+def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
 
-def get_updates(offset: int) -> list:
+def get_updates(offset):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     r = requests.get(url, params={"timeout": 5, "offset": offset}, timeout=10)
     return r.json().get("result", [])
 
-def fmt_time(ms) -> str:
+def fmt_time(ms):
     try:
         return datetime.fromtimestamp(int(ms) / 1000).strftime("%d/%m/%Y %H:%M:%S")
     except:
         return str(ms)
 
-# ── Fetch ──────────────────────────────────────────────────────
-def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
+def fetch_pay_transactions(since_ms, limit=50):
     try:
         data = binance_get("/sapi/v1/pay/transactions", {"startTimestamp": since_ms, "limit": limit})
         if isinstance(data, dict):
@@ -57,39 +58,36 @@ def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
         print(f"[pay error] {e}")
         return []
 
-def fetch_balance() -> list:
+def fetch_balance():
     try:
-        data = binance_get("/api/v3/account", {})
-        return [b for b in data.get("balances", []) if float(b["free"]) > 0 or float(b["locked"]) > 0]
+        data = binance_get("/sapi/v1/asset/wallet/balance", {})
+        if isinstance(data, list):
+            return [b for b in data if float(b.get("balance", 0)) > 0]
+        return []
     except Exception as e:
         print(f"[balance error] {e}")
         return []
 
-# ── Determinar dirección del pago ─────────────────────────────
-def is_incoming(t: dict) -> bool:
-    receiver = t.get("receiverInfo", {})
-    receiver_id = str(receiver.get("binanceId", ""))
-    uid = str(t.get("uid", ""))
-    return receiver_id == MY_UID or uid == MY_UID
+def is_incoming(t):
+    receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
+    return receiver_id == MY_UID
 
-def get_counterpart_name(t: dict) -> str:
-    incoming = is_incoming(t)
-    if incoming:
+def get_counterpart_name(t):
+    if is_incoming(t):
         payer = t.get("payerInfo", {})
-        return payer.get("name") or payer.get("binanceId") or "Desconocido"
+        return payer.get("name") or str(payer.get("binanceId", "Desconocido"))
     else:
         receiver = t.get("receiverInfo", {})
-        return receiver.get("name") or receiver.get("binanceId") or "Desconocido"
+        return receiver.get("name") or str(receiver.get("binanceId", "Desconocido"))
 
-# ── Formatter ──────────────────────────────────────────────────
-def fmt_pay(t: dict) -> str:
-    incoming  = is_incoming(t)
-    monto     = t.get("amount", "?")
-    moneda    = t.get("currency", "?")
+def fmt_pay(t):
+    incoming    = is_incoming(t)
+    monto       = t.get("amount", "?")
+    moneda      = t.get("currency", "?")
     contraparte = get_counterpart_name(t)
-    orden     = t.get("orderId", "N/A")
-    ts        = t.get("transactionTime", int(time.time() * 1000))
-    nota      = t.get("note", "") or ""
+    orden       = t.get("orderId", "N/A")
+    ts          = t.get("transactionTime", int(time.time() * 1000))
+    nota        = t.get("note", "") or ""
 
     if incoming:
         emoji  = "💚"
@@ -113,16 +111,19 @@ def fmt_pay(t: dict) -> str:
         msg += f"\n📝 Nota: {nota}"
     return msg
 
-# ── Comandos ───────────────────────────────────────────────────
 def cmd_ayuda():
     return (
         "🤖 <b>Comandos disponibles</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "/ultimo — Último pago recibido\n"
         "/ultimos5 — Últimos 5 movimientos\n"
-        "/balance — Saldo actual por moneda\n"
+        "/balance — Saldo actual\n"
         "/recibidos — Últimos pagos recibidos\n"
         "/enviados — Últimos pagos enviados\n"
+        "/on — Activar notificaciones\n"
+        "/off — Pausar notificaciones\n"
+        "/estado — Ver si está activo o pausado\n"
+        "/limpiar — Borrar historial\n"
         "/ayuda — Ver esta lista"
     )
 
@@ -132,7 +133,10 @@ def cmd_balance():
         return "❌ No se pudo obtener el balance."
     lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
     for b in balances[:15]:
-        lines.append(f"🪙 <b>{b['asset']}</b>: {float(b['free']):.6f} libre | {float(b['locked']):.6f} bloqueado")
+        wallet = b.get("walletName", b.get("walletType", "?"))
+        balance = float(b.get("balance", 0))
+        btc_val = float(b.get("walletBtc", 0))
+        lines.append(f"💳 <b>{wallet}</b>: {balance:.6f} (≈ {btc_val:.8f} BTC)")
     return "\n".join(lines)
 
 def cmd_ultimo():
@@ -178,9 +182,10 @@ def cmd_ultimos5():
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
-# ── Handler ────────────────────────────────────────────────────
-def handle_command(text: str):
+def handle_command(text):
+    global bot_activo, seen
     text = text.strip().lower().split("@")[0]
+
     if text == "/ayuda":
         send_telegram(cmd_ayuda())
     elif text == "/balance":
@@ -193,6 +198,21 @@ def handle_command(text: str):
         send_telegram(cmd_enviados())
     elif text == "/ultimos5":
         send_telegram(cmd_ultimos5())
+    elif text == "/on":
+        with lock:
+            bot_activo = True
+        send_telegram("✅ <b>Notificaciones activadas.</b>")
+    elif text == "/off":
+        with lock:
+            bot_activo = False
+        send_telegram("⏸ <b>Notificaciones pausadas.</b> Escribe /on para reactivar.")
+    elif text == "/estado":
+        estado = "✅ <b>Activo</b>" if bot_activo else "⏸ <b>Pausado</b>"
+        send_telegram(f"📊 Estado: {estado}")
+    elif text == "/limpiar":
+        with lock:
+            seen.clear()
+        send_telegram("🧹 <b>Historial borrado.</b> El bot notificará pagos recientes nuevamente.")
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         txs = fetch_pay_transactions(since, limit=3)
@@ -201,9 +221,8 @@ def handle_command(text: str):
         else:
             send_telegram("Sin transacciones")
     elif text == "/start":
-        send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos disponibles.")
+        send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos.")
 
-# ── Loops ──────────────────────────────────────────────────────
 def commands_loop():
     offset = 0
     print("[commands] Escuchando comandos...")
@@ -222,21 +241,23 @@ def commands_loop():
         time.sleep(2)
 
 def monitor_loop():
-    seen = set()
+    global seen
     since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
     for t in fetch_pay_transactions(since):
         seen.add(t.get("orderId") or str(t))
     print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
 
     while True:
-        since = int(time.time() * 1000) - 2 * 60 * 1000
-        for t in fetch_pay_transactions(since):
-            uid = t.get("orderId") or str(t)
-            if uid not in seen:
-                seen.add(uid)
-                send_telegram(fmt_pay(t))
-                direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
-                print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
+        if bot_activo:
+            since = int(time.time() * 1000) - 2 * 60 * 1000
+            for t in fetch_pay_transactions(since):
+                uid = t.get("orderId") or str(t)
+                with lock:
+                    if uid not in seen:
+                        seen.add(uid)
+                        send_telegram(fmt_pay(t))
+                        direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
+                        print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
         time.sleep(POLL_INTERVAL)
 
 def main():
