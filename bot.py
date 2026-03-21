@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import requests
 import threading
+import json
 from datetime import datetime
 
 # ── Configuración ──────────────────────────────────────────────
@@ -15,7 +16,6 @@ BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "LVB0ZL2LdhKLri6t03SPAiWIjvpAn2
 POLL_INTERVAL = 10
 BASE_URL      = "https://api.binance.com"
 
-# ── Helpers Binance ────────────────────────────────────────────
 def sign(params: dict) -> str:
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return hmac.new(BINANCE_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
@@ -28,7 +28,6 @@ def binance_get(path: str, params: dict) -> dict:
     r.raise_for_status()
     return r.json()
 
-# ── Helpers Telegram ───────────────────────────────────────────
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
@@ -44,7 +43,6 @@ def fmt_time(ms) -> str:
     except:
         return str(ms)
 
-# ── Fetch Binance Pay ──────────────────────────────────────────
 def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
     try:
         data = binance_get("/sapi/v1/pay/transactions", {"startTimestamp": since_ms, "limit": limit})
@@ -64,17 +62,16 @@ def fetch_balance() -> list:
         print(f"[balance error] {e}")
         return []
 
-# ── Formatter Binance Pay ──────────────────────────────────────
 def fmt_pay(t: dict) -> str:
     flow = t.get("transactionType", "")
     monto = t.get("amount", "?")
     moneda = t.get("currency", "?")
-    contraparte = t.get("counterPartyNickname") or t.get("counterParty") or "Desconocido"
+    contraparte = t.get("counterPartyNickname") or t.get("counterParty") or t.get("counterpartId") or "Desconocido"
     orden = t.get("orderId", "N/A")
     ts = t.get("transactionTime", int(time.time() * 1000))
-    nota = t.get("remark", "")
+    nota = t.get("remark", "") or t.get("note", "")
 
-    if flow == "IN":
+    if flow in ("IN", "C2C_RECEIVING", "PAY_RECEIVING"):
         emoji = "💚"
         titulo = "PAGO RECIBIDO"
         quien = f"👤 De: <b>{contraparte}</b>"
@@ -96,7 +93,6 @@ def fmt_pay(t: dict) -> str:
         msg += f"\n📝 Nota: {nota}"
     return msg
 
-# ── Comandos ───────────────────────────────────────────────────
 def cmd_ayuda():
     return (
         "🤖 <b>Comandos disponibles</b>\n"
@@ -123,7 +119,7 @@ def cmd_balance():
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    recibidos = [t for t in txs if t.get("transactionType") == "IN"]
+    recibidos = [t for t in txs if t.get("transactionType") in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")]
     if recibidos:
         return fmt_pay(recibidos[0])
     return "📭 No se encontraron pagos recibidos recientes."
@@ -131,7 +127,7 @@ def cmd_ultimo():
 def cmd_recibidos():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    recibidos = [t for t in txs if t.get("transactionType") == "IN"][:5]
+    recibidos = [t for t in txs if t.get("transactionType") in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")][:5]
     if not recibidos:
         return "📭 No hay pagos recibidos en los últimos 7 días."
     msgs = ["💚 <b>ÚLTIMOS PAGOS RECIBIDOS</b>\n━━━━━━━━━━━━━━━━━━"]
@@ -143,7 +139,7 @@ def cmd_recibidos():
 def cmd_enviados():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    enviados = [t for t in txs if t.get("transactionType") == "OUT"][:5]
+    enviados = [t for t in txs if t.get("transactionType") not in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")][:5]
     if not enviados:
         return "📭 No hay pagos enviados en los últimos 7 días."
     msgs = ["🔴 <b>ÚLTIMOS PAGOS ENVIADOS</b>\n━━━━━━━━━━━━━━━━━━"]
@@ -163,7 +159,6 @@ def cmd_ultimos5():
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
-# ── Handler de comandos ────────────────────────────────────────
 def handle_command(text: str):
     text = text.strip().lower().split("@")[0]
     if text == "/ayuda":
@@ -178,10 +173,16 @@ def handle_command(text: str):
         send_telegram(cmd_enviados())
     elif text == "/ultimos5":
         send_telegram(cmd_ultimos5())
+    elif text == "/debug":
+        since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
+        txs = fetch_pay_transactions(since, limit=3)
+        if txs:
+            send_telegram(f"<code>{json.dumps(txs[0], indent=2)[:3000]}</code>")
+        else:
+            send_telegram("Sin transacciones")
     elif text == "/start":
         send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos disponibles.")
 
-# ── Loop de comandos ───────────────────────────────────────────
 def commands_loop():
     offset = 0
     print("[commands] Escuchando comandos...")
@@ -199,30 +200,23 @@ def commands_loop():
             print(f"[commands error] {e}")
         time.sleep(2)
 
-# ── Loop de monitoreo ──────────────────────────────────────────
 def monitor_loop():
     seen = set()
-
     since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
     for t in fetch_pay_transactions(since):
         seen.add(t.get("orderId") or str(t))
-
     print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
 
     while True:
         since = int(time.time() * 1000) - 2 * 60 * 1000
-
         for t in fetch_pay_transactions(since):
             uid = t.get("orderId") or str(t)
             if uid not in seen:
                 seen.add(uid)
                 send_telegram(fmt_pay(t))
-                flow = t.get("transactionType", "?")
-                print(f"[{'IN' if flow=='IN' else 'OUT'}] {t.get('amount')} {t.get('currency')}")
-
+                print(f"[tx] {t.get('transactionType')} {t.get('amount')} {t.get('currency')}")
         time.sleep(POLL_INTERVAL)
 
-# ── Main ───────────────────────────────────────────────────────
 def main():
     send_telegram(
         "🤖 <b>Bot de Binance Pay iniciado</b>\n"
@@ -230,10 +224,8 @@ def main():
         "Escribe /ayuda para ver los comandos disponibles."
     )
     print("[bot] Iniciado.")
-
     t = threading.Thread(target=commands_loop, daemon=True)
     t.start()
-
     monitor_loop()
 
 if __name__ == "__main__":
