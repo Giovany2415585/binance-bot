@@ -12,10 +12,12 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "8622111444:AAHKYOFrIAFGvPdhHle
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5800355077")
 BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "Y5Cw2JrhUeDhSkKVE5cE36Dd715ggI1k3k4lFkjX8wKAhn4kn6EHY6XguO3iiy6g")
 BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "LVB0ZL2LdhKLri6t03SPAiWIjvpAn2QR13znhe8TeGHbWYakBn1Y26r88fVUsFrj")
+MY_UID           = "518173796"  # Tu UID de Binance
 
 POLL_INTERVAL = 10
 BASE_URL      = "https://api.binance.com"
 
+# ── Helpers Binance ────────────────────────────────────────────
 def sign(params: dict) -> str:
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return hmac.new(BINANCE_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
@@ -28,6 +30,7 @@ def binance_get(path: str, params: dict) -> dict:
     r.raise_for_status()
     return r.json()
 
+# ── Helpers Telegram ───────────────────────────────────────────
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
@@ -43,6 +46,7 @@ def fmt_time(ms) -> str:
     except:
         return str(ms)
 
+# ── Fetch ──────────────────────────────────────────────────────
 def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
     try:
         data = binance_get("/sapi/v1/pay/transactions", {"startTimestamp": since_ms, "limit": limit})
@@ -56,29 +60,45 @@ def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
 def fetch_balance() -> list:
     try:
         data = binance_get("/api/v3/account", {})
-        balances = [b for b in data.get("balances", []) if float(b["free"]) > 0 or float(b["locked"]) > 0]
-        return balances
+        return [b for b in data.get("balances", []) if float(b["free"]) > 0 or float(b["locked"]) > 0]
     except Exception as e:
         print(f"[balance error] {e}")
         return []
 
-def fmt_pay(t: dict) -> str:
-    flow = t.get("transactionType", "")
-    monto = t.get("amount", "?")
-    moneda = t.get("currency", "?")
-    contraparte = t.get("counterPartyNickname") or t.get("counterParty") or t.get("counterpartId") or "Desconocido"
-    orden = t.get("orderId", "N/A")
-    ts = t.get("transactionTime", int(time.time() * 1000))
-    nota = t.get("remark", "") or t.get("note", "")
+# ── Determinar dirección del pago ─────────────────────────────
+def is_incoming(t: dict) -> bool:
+    receiver = t.get("receiverInfo", {})
+    receiver_id = str(receiver.get("binanceId", ""))
+    uid = str(t.get("uid", ""))
+    return receiver_id == MY_UID or uid == MY_UID
 
-    if flow in ("IN", "C2C_RECEIVING", "PAY_RECEIVING"):
-        emoji = "💚"
-        titulo = "PAGO RECIBIDO"
-        quien = f"👤 De: <b>{contraparte}</b>"
+def get_counterpart_name(t: dict) -> str:
+    incoming = is_incoming(t)
+    if incoming:
+        payer = t.get("payerInfo", {})
+        return payer.get("name") or payer.get("binanceId") or "Desconocido"
     else:
-        emoji = "🔴"
+        receiver = t.get("receiverInfo", {})
+        return receiver.get("name") or receiver.get("binanceId") or "Desconocido"
+
+# ── Formatter ──────────────────────────────────────────────────
+def fmt_pay(t: dict) -> str:
+    incoming  = is_incoming(t)
+    monto     = t.get("amount", "?")
+    moneda    = t.get("currency", "?")
+    contraparte = get_counterpart_name(t)
+    orden     = t.get("orderId", "N/A")
+    ts        = t.get("transactionTime", int(time.time() * 1000))
+    nota      = t.get("note", "") or ""
+
+    if incoming:
+        emoji  = "💚"
+        titulo = "PAGO RECIBIDO"
+        quien  = f"👤 De: <b>{contraparte}</b>"
+    else:
+        emoji  = "🔴"
         titulo = "PAGO ENVIADO"
-        quien = f"👤 Para: <b>{contraparte}</b>"
+        quien  = f"👤 Para: <b>{contraparte}</b>"
 
     msg = (
         f"{emoji} <b>{titulo}</b>\n"
@@ -93,6 +113,7 @@ def fmt_pay(t: dict) -> str:
         msg += f"\n📝 Nota: {nota}"
     return msg
 
+# ── Comandos ───────────────────────────────────────────────────
 def cmd_ayuda():
     return (
         "🤖 <b>Comandos disponibles</b>\n"
@@ -111,15 +132,13 @@ def cmd_balance():
         return "❌ No se pudo obtener el balance."
     lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
     for b in balances[:15]:
-        free   = float(b['free'])
-        locked = float(b['locked'])
-        lines.append(f"🪙 <b>{b['asset']}</b>: {free:.6f} libre | {locked:.6f} bloqueado")
+        lines.append(f"🪙 <b>{b['asset']}</b>: {float(b['free']):.6f} libre | {float(b['locked']):.6f} bloqueado")
     return "\n".join(lines)
 
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    recibidos = [t for t in txs if t.get("transactionType") in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")]
+    recibidos = [t for t in txs if is_incoming(t)]
     if recibidos:
         return fmt_pay(recibidos[0])
     return "📭 No se encontraron pagos recibidos recientes."
@@ -127,7 +146,7 @@ def cmd_ultimo():
 def cmd_recibidos():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    recibidos = [t for t in txs if t.get("transactionType") in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")][:5]
+    recibidos = [t for t in txs if is_incoming(t)][:5]
     if not recibidos:
         return "📭 No hay pagos recibidos en los últimos 7 días."
     msgs = ["💚 <b>ÚLTIMOS PAGOS RECIBIDOS</b>\n━━━━━━━━━━━━━━━━━━"]
@@ -139,7 +158,7 @@ def cmd_recibidos():
 def cmd_enviados():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
     txs = fetch_pay_transactions(since, limit=20)
-    enviados = [t for t in txs if t.get("transactionType") not in ("IN", "C2C_RECEIVING", "PAY_RECEIVING")][:5]
+    enviados = [t for t in txs if not is_incoming(t)][:5]
     if not enviados:
         return "📭 No hay pagos enviados en los últimos 7 días."
     msgs = ["🔴 <b>ÚLTIMOS PAGOS ENVIADOS</b>\n━━━━━━━━━━━━━━━━━━"]
@@ -159,6 +178,7 @@ def cmd_ultimos5():
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
+# ── Handler ────────────────────────────────────────────────────
 def handle_command(text: str):
     text = text.strip().lower().split("@")[0]
     if text == "/ayuda":
@@ -183,6 +203,7 @@ def handle_command(text: str):
     elif text == "/start":
         send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos disponibles.")
 
+# ── Loops ──────────────────────────────────────────────────────
 def commands_loop():
     offset = 0
     print("[commands] Escuchando comandos...")
@@ -214,7 +235,8 @@ def monitor_loop():
             if uid not in seen:
                 seen.add(uid)
                 send_telegram(fmt_pay(t))
-                print(f"[tx] {t.get('transactionType')} {t.get('amount')} {t.get('currency')}")
+                direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
+                print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
         time.sleep(POLL_INTERVAL)
 
 def main():
