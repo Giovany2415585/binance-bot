@@ -60,7 +60,7 @@ def fetch_pay_transactions(since_ms, limit=50):
 
 def fetch_balance():
     try:
-        data = binance_get("/sapi/v1/asset/wallet/balance", {})
+        data = binance_get("/sapi/v1/capital/config/getall", {})
         if isinstance(data, list):
             return [b for b in data if float(b.get("balance", 0)) > 0]
         return []
@@ -133,10 +133,9 @@ def cmd_balance():
         return "❌ No se pudo obtener el balance."
     lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
     for b in balances[:15]:
-        wallet = b.get("walletName", b.get("walletType", "?"))
-        balance = float(b.get("balance", 0))
-        btc_val = float(b.get("walletBtc", 0))
-        lines.append(f"💳 <b>{wallet}</b>: {balance:.6f} (≈ {btc_val:.8f} BTC)")
+        moneda = b.get("coin", "?")
+        libre  = float(b.get("free", 0))
+        lines.append(f"🪙 <b>{moneda}</b>: {libre:.6f}")
     return "\n".join(lines)
 
 def cmd_ultimo():
