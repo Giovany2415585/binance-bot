@@ -7,7 +7,6 @@ import threading
 import json
 from datetime import datetime
 
-# ── Configuración ──────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "8622111444:AAHKYOFrIAFGvPdhHlev6UwfNoKtUFsS93o")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5800355077")
 BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "Y5Cw2JrhUeDhSkKVE5cE36Dd715ggI1k3k4lFkjX8wKAhn4kn6EHY6XguO3iiy6g")
@@ -60,23 +59,13 @@ def fetch_pay_transactions(since_ms, limit=50):
 
 def fetch_balance():
     try:
-        data = binance_get("/api/v3/account", {})
-        balances = data.get("balances", [])
-        return [b for b in balances if float(b.get("free", 0)) > 0 or float(b.get("locked", 0)) > 0]
+        data = binance_get("/sapi/v1/asset/getUserAsset", {"needBtcValuation": "false"})
+        if isinstance(data, list):
+            return [b for b in data if float(b.get("free", 0)) > 0]
+        return []
     except Exception as e:
         print(f"[balance error] {e}")
         return []
-
-def cmd_balance():
-    balances = fetch_balance()
-    if not balances:
-        return "❌ No se pudo obtener el balance."
-    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
-    for b in balances[:15]:
-        moneda = b.get("asset", "?")
-        libre  = float(b.get("free", 0))
-        lines.append(f"🪙 <b>{moneda}</b>: {libre:.6f}")
-    return "\n".join(lines)
 
 def is_incoming(t):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
@@ -143,9 +132,11 @@ def cmd_balance():
         return "❌ No se pudo obtener el balance."
     lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
     for b in balances[:15]:
-        moneda = b.get("coin", "?")
+        moneda = b.get("asset", "?")
         libre  = float(b.get("free", 0))
-        lines.append(f"🪙 <b>{moneda}</b>: {libre:.6f}")
+        bloq   = float(b.get("locked", 0))
+        total  = libre + bloq
+        lines.append(f"🪙 <b>{moneda}</b>: {total:.6f}")
     return "\n".join(lines)
 
 def cmd_ultimo():
