@@ -44,23 +44,15 @@ def fmt_time(ms) -> str:
     except:
         return str(ms)
 
-# ── Fetch Binance ──────────────────────────────────────────────
-def fetch_deposits(since_ms: int, limit: int = 50) -> list:
-    try:
-        data = binance_get("/sapi/v1/capital/deposit/hisrec", {"startTime": since_ms, "limit": limit, "status": 1})
-        return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"[deposits error] {e}")
-        return []
-
-def fetch_withdrawals(since_ms: int, limit: int = 50) -> list:
+# ── Fetch Binance Pay ──────────────────────────────────────────
+def fetch_pay_transactions(since_ms: int, limit: int = 50) -> list:
     try:
         data = binance_get("/sapi/v1/pay/transactions", {"startTimestamp": since_ms, "limit": limit})
         if isinstance(data, dict):
             return data.get("data", [])
         return []
     except Exception as e:
-        print(f"[withdrawals error] {e}")
+        print(f"[pay error] {e}")
         return []
 
 def fetch_balance() -> list:
@@ -72,34 +64,37 @@ def fetch_balance() -> list:
         print(f"[balance error] {e}")
         return []
 
-# ── Formatters ─────────────────────────────────────────────────
-def fmt_deposit(d: dict) -> str:
-    status_map = {0: "⏳ Pendiente", 1: "✅ Confirmado", 6: "⚠️ Anomalía"}
-    status = status_map.get(d.get("status", 0), "❓ Desconocido")
-    return (
-        f"💚 <b>DEPÓSITO RECIBIDO</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🪙 Moneda: <b>{d.get('coin','?')}</b>\n"
-        f"💰 Monto:  <b>{d.get('amount','?')}</b>\n"
-        f"📌 Estado: {status}\n"
-        f"🕐 Fecha:  {fmt_time(d.get('insertTime', 0))}\n"
-        f"🔗 TxID:   <code>{str(d.get('txId','N/A'))[:24]}…</code>"
-    )
+# ── Formatter Binance Pay ──────────────────────────────────────
+def fmt_pay(t: dict) -> str:
+    flow = t.get("transactionType", "")
+    monto = t.get("amount", "?")
+    moneda = t.get("currency", "?")
+    contraparte = t.get("counterPartyNickname") or t.get("counterParty") or "Desconocido"
+    orden = t.get("orderId", "N/A")
+    ts = t.get("transactionTime", int(time.time() * 1000))
+    nota = t.get("remark", "")
 
-def fmt_withdrawal(w: dict) -> str:
-    status_map = {0:"📧 Correo enviado", 1:"❌ Cancelado", 2:"⏳ Esperando",
-                  3:"🔴 Rechazado", 4:"⚙️ Procesando", 5:"⚠️ Fallo", 6:"✅ Completado"}
-    status = status_map.get(w.get("status", 0), "❓ Desconocido")
-    ts = w.get("applyTime", int(time.time() * 1000))
-    return (
-        f"🔴 <b>RETIRO / PAGO ENVIADO</b>\n"
+    if flow == "IN":
+        emoji = "💚"
+        titulo = "PAGO RECIBIDO"
+        quien = f"👤 De: <b>{contraparte}</b>"
+    else:
+        emoji = "🔴"
+        titulo = "PAGO ENVIADO"
+        quien = f"👤 Para: <b>{contraparte}</b>"
+
+    msg = (
+        f"{emoji} <b>{titulo}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🪙 Moneda: <b>{w.get('coin','?')}</b>\n"
-        f"💸 Monto:  <b>{w.get('amount','?')}</b>\n"
-        f"📬 Destino: <code>{str(w.get('address','?'))[:20]}…</code>\n"
-        f"📌 Estado: {status}\n"
-        f"🕐 Fecha:  {fmt_time(ts if isinstance(ts, int) else int(time.time()*1000))}"
+        f"🪙 Moneda: <b>{moneda}</b>\n"
+        f"💰 Monto:  <b>{monto}</b>\n"
+        f"{quien}\n"
+        f"🕐 Fecha:  {fmt_time(ts)}\n"
+        f"🔖 Orden:  <code>{str(orden)[:20]}</code>"
     )
+    if nota:
+        msg += f"\n📝 Nota: {nota}"
+    return msg
 
 # ── Comandos ───────────────────────────────────────────────────
 def cmd_ayuda():
@@ -109,8 +104,8 @@ def cmd_ayuda():
         "/ultimo — Último pago recibido\n"
         "/ultimos5 — Últimos 5 movimientos\n"
         "/balance — Saldo actual por moneda\n"
-        "/depositos — Últimos depósitos\n"
-        "/retiros — Últimos retiros\n"
+        "/recibidos — Últimos pagos recibidos\n"
+        "/enviados — Últimos pagos enviados\n"
         "/ayuda — Ver esta lista"
     )
 
@@ -127,56 +122,44 @@ def cmd_balance():
 
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
-    deps = fetch_deposits(since, limit=5)
-    if deps:
-        return fmt_deposit(deps[-1])
-    return "📭 No se encontraron depósitos recientes."
+    txs = fetch_pay_transactions(since, limit=20)
+    recibidos = [t for t in txs if t.get("transactionType") == "IN"]
+    if recibidos:
+        return fmt_pay(recibidos[0])
+    return "📭 No se encontraron pagos recibidos recientes."
 
-def cmd_depositos():
+def cmd_recibidos():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
-    deps = fetch_deposits(since, limit=5)
-    if not deps:
-        return "📭 No hay depósitos en los últimos 7 días."
-    msgs = ["💚 <b>ÚLTIMOS DEPÓSITOS</b>\n━━━━━━━━━━━━━━━━━━"]
-    for d in deps[-5:]:
-        msgs.append(fmt_deposit(d))
+    txs = fetch_pay_transactions(since, limit=20)
+    recibidos = [t for t in txs if t.get("transactionType") == "IN"][:5]
+    if not recibidos:
+        return "📭 No hay pagos recibidos en los últimos 7 días."
+    msgs = ["💚 <b>ÚLTIMOS PAGOS RECIBIDOS</b>\n━━━━━━━━━━━━━━━━━━"]
+    for t in recibidos:
+        msgs.append(fmt_pay(t))
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
-def cmd_retiros():
+def cmd_enviados():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
-    wits = fetch_withdrawals(since, limit=5)
-    if not wits:
-        return "📭 No hay retiros en los últimos 7 días."
-    msgs = ["🔴 <b>ÚLTIMOS RETIROS</b>\n━━━━━━━━━━━━━━━━━━"]
-    for w in wits[-5:]:
-        msgs.append(fmt_withdrawal(w))
+    txs = fetch_pay_transactions(since, limit=20)
+    enviados = [t for t in txs if t.get("transactionType") == "OUT"][:5]
+    if not enviados:
+        return "📭 No hay pagos enviados en los últimos 7 días."
+    msgs = ["🔴 <b>ÚLTIMOS PAGOS ENVIADOS</b>\n━━━━━━━━━━━━━━━━━━"]
+    for t in enviados:
+        msgs.append(fmt_pay(t))
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
 def cmd_ultimos5():
     since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
-    deps = fetch_deposits(since, limit=5)
-    wits = fetch_withdrawals(since, limit=5)
-
-    movimientos = []
-    for d in deps:
-        movimientos.append(("dep", d.get("insertTime", 0), d))
-    for w in wits:
-        ts = w.get("applyTime", 0)
-        movimientos.append(("wit", ts if isinstance(ts, int) else 0, w))
-
-    movimientos.sort(key=lambda x: x[1], reverse=True)
-
-    if not movimientos:
+    txs = fetch_pay_transactions(since, limit=5)
+    if not txs:
         return "📭 No hay movimientos recientes."
-
     msgs = ["📋 <b>ÚLTIMOS 5 MOVIMIENTOS</b>\n━━━━━━━━━━━━━━━━━━"]
-    for tipo, _, data in movimientos[:5]:
-        if tipo == "dep":
-            msgs.append(fmt_deposit(data))
-        else:
-            msgs.append(fmt_withdrawal(data))
+    for t in txs:
+        msgs.append(fmt_pay(t))
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
@@ -189,16 +172,16 @@ def handle_command(text: str):
         send_telegram(cmd_balance())
     elif text == "/ultimo":
         send_telegram(cmd_ultimo())
-    elif text == "/depositos":
-        send_telegram(cmd_depositos())
-    elif text == "/retiros":
-        send_telegram(cmd_retiros())
+    elif text == "/recibidos":
+        send_telegram(cmd_recibidos())
+    elif text == "/enviados":
+        send_telegram(cmd_enviados())
     elif text == "/ultimos5":
         send_telegram(cmd_ultimos5())
     elif text == "/start":
-        send_telegram("🤖 <b>Bot de Binance activo</b>\nEscribe /ayuda para ver los comandos disponibles.")
+        send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos disponibles.")
 
-# ── Loop de comandos (hilo separado) ──────────────────────────
+# ── Loop de comandos ───────────────────────────────────────────
 def commands_loop():
     offset = 0
     print("[commands] Escuchando comandos...")
@@ -218,41 +201,32 @@ def commands_loop():
 
 # ── Loop de monitoreo ──────────────────────────────────────────
 def monitor_loop():
-    seen_deposits    = set()
-    seen_withdrawals = set()
+    seen = set()
 
     since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
-    for d in fetch_deposits(since):
-        seen_deposits.add(d.get("txId") or d.get("id") or str(d))
-    for w in fetch_withdrawals(since):
-        seen_withdrawals.add(w.get("id") or w.get("txId") or str(w))
+    for t in fetch_pay_transactions(since):
+        seen.add(t.get("orderId") or str(t))
 
-    print(f"[bot] Historial previo cargado: {len(seen_deposits)} depósitos, {len(seen_withdrawals)} retiros")
+    print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
 
     while True:
         since = int(time.time() * 1000) - 2 * 60 * 1000
 
-        for d in fetch_deposits(since):
-            uid = d.get("txId") or d.get("id") or str(d)
-            if uid not in seen_deposits:
-                seen_deposits.add(uid)
-                send_telegram(fmt_deposit(d))
-                print(f"[+] Depósito: {d.get('amount')} {d.get('coin')}")
-
-        for w in fetch_withdrawals(since):
-            uid = w.get("id") or w.get("txId") or str(w)
-            if uid not in seen_withdrawals:
-                seen_withdrawals.add(uid)
-                send_telegram(fmt_withdrawal(w))
-                print(f"[-] Retiro: {w.get('amount')} {w.get('coin')}")
+        for t in fetch_pay_transactions(since):
+            uid = t.get("orderId") or str(t)
+            if uid not in seen:
+                seen.add(uid)
+                send_telegram(fmt_pay(t))
+                flow = t.get("transactionType", "?")
+                print(f"[{'IN' if flow=='IN' else 'OUT'}] {t.get('amount')} {t.get('currency')}")
 
         time.sleep(POLL_INTERVAL)
 
 # ── Main ───────────────────────────────────────────────────────
 def main():
     send_telegram(
-        "🤖 <b>Bot de Binance iniciado</b>\n"
-        "Monitoreando depósitos y retiros cada 10 segundos…\n\n"
+        "🤖 <b>Bot de Binance Pay iniciado</b>\n"
+        "Monitoreando pagos cada 10 segundos…\n\n"
         "Escribe /ayuda para ver los comandos disponibles."
     )
     print("[bot] Iniciado.")
