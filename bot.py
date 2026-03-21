@@ -60,13 +60,11 @@ def fetch_pay_transactions(since_ms, limit=50):
 
 def fetch_balance():
     try:
-        data = binance_get("/sapi/v1/asset/wallet/balance", {})
-        if isinstance(data, list):
-            return [b for b in data if float(b.get("balance", 0)) > 0]
-        return []
+        data = binance_get("/sapi/v1/asset/balance", {"asset": "USDT"})
+        return data if isinstance(data, dict) else {}
     except Exception as e:
         print(f"[balance error] {e}")
-        return []
+        return {}
 
 def is_incoming(t):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
@@ -128,15 +126,21 @@ def cmd_ayuda():
     )
 
 def cmd_balance():
-    balances = fetch_balance()
-    if not balances:
+    b = fetch_balance()
+    if not b:
         return "❌ No se pudo obtener el balance."
-    lines = ["💼 <b>BALANCE ACTUAL</b>\n━━━━━━━━━━━━━━━━━━"]
-    for b in balances:
-        wallet = b.get("walletName", "?")
-        balance_usdt = float(b.get("balance", 0))
-        lines.append(f"💳 <b>{wallet}</b>: {balance_usdt:.2f} USDT")
-    return "\n".join(lines)
+    libre     = float(b.get("free", 0))
+    bloqueado = float(b.get("locked", 0))
+    total     = libre + bloqueado
+    msg = (
+        f"💼 <b>BALANCE ACTUAL</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🪙 <b>USDT disponible:</b> {libre:.2f}\n"
+    )
+    if bloqueado > 0:
+        msg += f"🔒 <b>USDT bloqueado:</b> {bloqueado:.2f}\n"
+    msg += f"💰 <b>Total:</b> {total:.2f} USDT"
+    return msg
 
 def cmd_ultimo():
     since = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
