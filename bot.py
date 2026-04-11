@@ -105,6 +105,7 @@ def get_counterpart_name(t):
         return receiver.get("name") or str(receiver.get("binanceId", "Desconocido"))
 
 def fmt_pay(t):
+    print(f"[debug pay] {json.dumps(t)}")
     incoming    = is_incoming(t)
     monto       = t.get("amount", "?")
     moneda      = t.get("currency", "?")
@@ -161,9 +162,7 @@ def get_menu_markup():
             [
                 {"text": "💱 Dólar en COP", "callback_data": "/dolar"}
             ],
-            [
-                {"text": "💳 Generar cobro", "callback_data": "/cobrar"}
-            ]
+            
         ]
     }
 
