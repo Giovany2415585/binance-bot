@@ -157,6 +157,9 @@ def get_menu_markup():
             ],
             [
                 {"text": "🧹 Limpiar historial", "callback_data": "/limpiar"}
+            ],
+            [
+                {"text": "💱 Dólar en COP", "callback_data": "/dolar"}
             ]
         ]
     }
@@ -271,6 +274,13 @@ def handle_command(text, chat_id):
         with lock:
             seen.clear()
         send_telegram("🧹 <b>Historial borrado.</b>", chat_id=chat_id)
+    elif text == "/dolar":
+        try:
+            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
+            precio = float(r.json().get("price", 0))
+            send_telegram(f"💱 <b>DÓLAR HOY</b>\n━━━━━━━━━━━━━━━━━━\n🇨🇴 <b>1 USD = {precio:,.2f} COP</b>", chat_id=chat_id)
+        except Exception as e:
+            send_telegram("❌ No se pudo obtener el precio.", chat_id=chat_id)
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         txs = fetch_pay_transactions(since, limit=3)
