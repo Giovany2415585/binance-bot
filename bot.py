@@ -160,6 +160,9 @@ def get_menu_markup():
             ],
             [
                 {"text": "💱 Dólar en COP", "callback_data": "/dolar"}
+            ],
+            [
+                {"text": "💳 Generar cobro", "callback_data": "/cobrar"}
             ]
         ]
     }
@@ -274,6 +277,35 @@ def handle_command(text, chat_id):
         with lock:
             seen.clear()
         send_telegram("🧹 <b>Historial borrado.</b>", chat_id=chat_id)
+    elif text == "/cobrar":
+        send_telegram(
+            "💳 <b>Generar cobro</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Escribe el monto que deseas cobrar:\n"
+            "Ejemplo: <code>/monto 50</code>",
+            chat_id=chat_id
+        )
+    elif text.startswith("/monto"):
+        try:
+            monto = text.split()[1]
+            float(monto)
+            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=binanceid:518173796"
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+            requests.post(url, json={
+                "chat_id": chat_id,
+                "photo": qr_url,
+                "caption": (
+                    f"💳 <b>SOLICITUD DE COBRO</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"💰 <b>Monto:</b> {float(monto):.2f} USDT\n"
+                    f"🆔 <b>Binance ID:</b> 518173796\n"
+                    f"👤 <b>Nickname:</b> CINEBOX_NET\n\n"
+                    f"📱 Escanea con Binance App para pagar"
+                ),
+                "parse_mode": "HTML"
+            }, timeout=10)
+        except:
+            send_telegram("❌ Formato incorrecto. Usa: <code>/monto 50</code>", chat_id=chat_id)
     elif text == "/dolar":
         try:
             r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
