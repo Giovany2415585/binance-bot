@@ -79,10 +79,14 @@ def fetch_pay_transactions(since_ms=None, limit=50):
 def fetch_balance():
     try:
         data = binance_get("/sapi/v1/asset/wallet/balance", {})
-        print(f"[debug balance] {data}")
         if isinstance(data, list):
             for wallet in data:
-                print(f"[debug wallet] {wallet}")
+                if wallet.get("walletName") == "Funding":
+                    btc_balance = float(wallet.get("balance", 0))
+                    price_data = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=10).json()
+                    btc_price = float(price_data.get("price", 0))
+                    usdt_total = btc_balance * btc_price
+                    return {"free": str(usdt_total), "locked": "0"}
         return {}
     except Exception as e:
         print(f"[balance error] {e}")
