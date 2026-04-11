@@ -62,9 +62,12 @@ def fmt_time(ms):
     except:
         return str(ms)
 
-def fetch_pay_transactions(since_ms, limit=50):
+def fetch_pay_transactions(since_ms=None, limit=50):
     try:
-        data = binance_get("/sapi/v1/pay/transactions", {"startTimestamp": since_ms, "limit": limit})
+        params = {"limit": limit}
+        if since_ms:
+            params["startTime"] = since_ms
+        data = binance_get("/sapi/v1/pay/transactions", params)
         if isinstance(data, dict):
             return data.get("data", [])
         return []
