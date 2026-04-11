@@ -78,11 +78,12 @@ def fetch_pay_transactions(since_ms=None, limit=50):
 # ── FIX: endpoint correcto para balance USDT ──────────────────
 def fetch_balance():
     try:
-        data = binance_get("/sapi/v1/asset/get-funding-asset", {})
+        data = binance_get("/sapi/v1/capital/config/getall", {})
         if isinstance(data, list):
             for asset in data:
-                if asset.get("asset") == "USDT":
-                    return asset
+                if asset.get("coin") == "USDT":
+                    free = asset.get("free", "0")
+                    return {"free": free, "locked": "0"}
         return {}
     except Exception as e:
         print(f"[balance error] {e}")
