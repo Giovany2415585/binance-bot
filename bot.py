@@ -134,6 +134,9 @@ def fmt_pay(t):
         f"🕐 Fecha:  {fmt_time(ts)}\n"
         f"🔖 Orden:  <code>{str(orden)[:20]}</code>"
     )
+    binance_id = str(t.get("payerInfo", {}).get("binanceId", "")) if incoming else str(t.get("receiverInfo", {}).get("binanceId", ""))
+    if binance_id:
+        msg += f"\n🆔 Binance ID: <code>{binance_id}</code>"
     if nota:
         msg += f"\n📝 Nota: {nota}"
     return msg
@@ -354,9 +357,23 @@ def commands_loop():
         time.sleep(2)
 
 def monitor_loop():
-    print("[bot] Monitor de Pay desactivado. Usa /balance para ver tu saldo.")
+    global seen
+    since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
+    for t in fetch_pay_transactions(since):
+        seen.add(t.get("orderId") or str(t))
+    print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
     while True:
-        time.sleep(60)
+        if bot_activo:
+            since = int(time.time() * 1000) - 2 * 60 * 1000
+            for t in fetch_pay_transactions(since):
+                uid = t.get("orderId") or str(t)
+                with lock:
+                    if uid not in seen:
+                        seen.add(uid)
+                        send_telegram(fmt_pay(t))
+                        direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
+                        print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
+        time.sleep(POLL_INTERVAL)
 
 def main():
     send_telegram(
