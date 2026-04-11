@@ -8,11 +8,14 @@ import json
 from datetime import datetime
 
 # ── Configuración ──────────────────────────────────────────────
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "8622111444:AAHKYOFrIAFGvPdhHlev6UwfNoKtUFsS93o")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5800355077")
-BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "Y5Cw2JrhUeDhSkKVE5cE36Dd715ggI1k3k4lFkjX8wKAhn4kn6EHY6XguO3iiy6g")
-BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "LVB0ZL2LdhKLri6t03SPAiWIjvpAn2QR13znhe8TeGHbWYakBn1Y26r88fVUsFrj")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "")
+BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "")
 MY_UID           = "518173796"
+
+# ── Seguridad: solo tu chat_id puede usar el bot ───────────────
+AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
 POLL_INTERVAL = 10
 BASE_URL      = "https://api.binance.com"
@@ -33,9 +36,20 @@ def binance_get(path, params):
     r.raise_for_status()
     return r.json()
 
-def send_telegram(text):
+def send_telegram(text, chat_id=None, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+    payload = {
+        "chat_id": chat_id or TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    requests.post(url, json=payload, timeout=10)
+
+def answer_callback(callback_query_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
+    requests.post(url, json={"callback_query_id": callback_query_id}, timeout=10)
 
 def get_updates(offset):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -58,10 +72,15 @@ def fetch_pay_transactions(since_ms, limit=50):
         print(f"[pay error] {e}")
         return []
 
+# ── FIX: endpoint correcto para balance USDT ──────────────────
 def fetch_balance():
     try:
-        data = binance_get("/sapi/v1/asset/balance", {"asset": "USDT"})
-        return data if isinstance(data, dict) else {}
+        data = binance_get("/api/v3/account", {})
+        balances = data.get("balances", [])
+        for asset in balances:
+            if asset.get("asset") == "USDT":
+                return asset
+        return {}
     except Exception as e:
         print(f"[balance error] {e}")
         return {}
@@ -109,20 +128,39 @@ def fmt_pay(t):
         msg += f"\n📝 Nota: {nota}"
     return msg
 
-def cmd_ayuda():
-    return (
-        "🤖 <b>Comandos disponibles</b>\n"
+# ── Menú principal con botones inline ─────────────────────────
+def get_menu_markup():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "💼 Balance",     "callback_data": "/balance"},
+                {"text": "📋 Últimos 5",   "callback_data": "/ultimos5"}
+            ],
+            [
+                {"text": "💚 Recibidos",   "callback_data": "/recibidos"},
+                {"text": "🔴 Enviados",    "callback_data": "/enviados"}
+            ],
+            [
+                {"text": "🔔 Último pago", "callback_data": "/ultimo"},
+                {"text": "📊 Estado",      "callback_data": "/estado"}
+            ],
+            [
+                {"text": "✅ Activar notif.",  "callback_data": "/on"},
+                {"text": "⏸ Pausar notif.",   "callback_data": "/off"}
+            ],
+            [
+                {"text": "🧹 Limpiar historial", "callback_data": "/limpiar"}
+            ]
+        ]
+    }
+
+def cmd_ayuda(chat_id):
+    send_telegram(
+        "🤖 <b>Bot de Binance Pay</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "/ultimo — Último pago recibido\n"
-        "/ultimos5 — Últimos 5 movimientos\n"
-        "/balance — Saldo actual en USDT\n"
-        "/recibidos — Últimos pagos recibidos\n"
-        "/enviados — Últimos pagos enviados\n"
-        "/on — Activar notificaciones\n"
-        "/off — Pausar notificaciones\n"
-        "/estado — Ver si está activo o pausado\n"
-        "/limpiar — Borrar historial\n"
-        "/ayuda — Ver esta lista"
+        "Selecciona una opción:",
+        chat_id=chat_id,
+        reply_markup=get_menu_markup()
     )
 
 def cmd_balance():
@@ -185,46 +223,54 @@ def cmd_ultimos5():
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
-def handle_command(text):
+# ── Verificación de identidad ──────────────────────────────────
+def is_authorized(chat_id):
+    return int(chat_id) == AUTHORIZED_CHAT_ID
+
+def handle_command(text, chat_id):
     global bot_activo, seen
+
+    # 🔐 Solo tú puedes usar el bot
+    if not is_authorized(chat_id):
+        send_telegram("⛔ No autorizado.", chat_id=chat_id)
+        return
+
     text = text.strip().lower().split("@")[0]
 
-    if text == "/ayuda":
-        send_telegram(cmd_ayuda())
+    if text in ("/ayuda", "/start", "/menu"):
+        cmd_ayuda(chat_id)
     elif text == "/balance":
-        send_telegram(cmd_balance())
+        send_telegram(cmd_balance(), chat_id=chat_id)
     elif text == "/ultimo":
-        send_telegram(cmd_ultimo())
+        send_telegram(cmd_ultimo(), chat_id=chat_id)
     elif text == "/recibidos":
-        send_telegram(cmd_recibidos())
+        send_telegram(cmd_recibidos(), chat_id=chat_id)
     elif text == "/enviados":
-        send_telegram(cmd_enviados())
+        send_telegram(cmd_enviados(), chat_id=chat_id)
     elif text == "/ultimos5":
-        send_telegram(cmd_ultimos5())
+        send_telegram(cmd_ultimos5(), chat_id=chat_id)
     elif text == "/on":
         with lock:
             bot_activo = True
-        send_telegram("✅ <b>Notificaciones activadas.</b>")
+        send_telegram("✅ <b>Notificaciones activadas.</b>", chat_id=chat_id)
     elif text == "/off":
         with lock:
             bot_activo = False
-        send_telegram("⏸ <b>Notificaciones pausadas.</b> Escribe /on para reactivar.")
+        send_telegram("⏸ <b>Notificaciones pausadas.</b> Escribe /on para reactivar.", chat_id=chat_id)
     elif text == "/estado":
         estado = "✅ <b>Activo</b>" if bot_activo else "⏸ <b>Pausado</b>"
-        send_telegram(f"📊 Estado: {estado}")
+        send_telegram(f"📊 Estado: {estado}", chat_id=chat_id)
     elif text == "/limpiar":
         with lock:
             seen.clear()
-        send_telegram("🧹 <b>Historial borrado.</b> El bot notificará pagos recientes nuevamente.")
+        send_telegram("🧹 <b>Historial borrado.</b>", chat_id=chat_id)
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         txs = fetch_pay_transactions(since, limit=3)
         if txs:
-            send_telegram(f"<code>{json.dumps(txs[0], indent=2)[:3000]}</code>")
+            send_telegram(f"<code>{json.dumps(txs[0], indent=2)[:3000]}</code>", chat_id=chat_id)
         else:
-            send_telegram("Sin transacciones")
-    elif text == "/start":
-        send_telegram("🤖 <b>Bot de Binance Pay activo</b>\nEscribe /ayuda para ver los comandos.")
+            send_telegram("Sin transacciones", chat_id=chat_id)
 
 def commands_loop():
     offset = 0
@@ -234,11 +280,25 @@ def commands_loop():
             updates = get_updates(offset)
             for u in updates:
                 offset = u["update_id"] + 1
+
+                # Manejo de botones inline
+                if "callback_query" in u:
+                    cb = u["callback_query"]
+                    chat_id = cb["message"]["chat"]["id"]
+                    data    = cb.get("data", "")
+                    answer_callback(cb["id"])
+                    if is_authorized(chat_id):
+                        handle_command(data, chat_id)
+                    continue
+
+                # Manejo de comandos de texto
                 msg = u.get("message", {})
                 text = msg.get("text", "")
-                if text.startswith("/"):
-                    print(f"[cmd] {text}")
-                    handle_command(text)
+                chat_id = msg.get("chat", {}).get("id")
+                if text.startswith("/") and chat_id:
+                    print(f"[cmd] {text} from {chat_id}")
+                    handle_command(text, chat_id)
+
         except Exception as e:
             print(f"[commands error] {e}")
         time.sleep(2)
@@ -267,7 +327,8 @@ def main():
     send_telegram(
         "🤖 <b>Bot de Binance Pay iniciado</b>\n"
         "Monitoreando pagos cada 10 segundos…\n\n"
-        "Escribe /ayuda para ver los comandos disponibles."
+        "Toca el botón para ver opciones 👇",
+        reply_markup=get_menu_markup()
     )
     print("[bot] Iniciado.")
     t = threading.Thread(target=commands_loop, daemon=True)
