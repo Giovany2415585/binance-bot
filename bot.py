@@ -289,7 +289,7 @@ def handle_command(text, chat_id):
         try:
             monto = text.split()[1]
             float(monto)
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=binanceid:518173796"
+            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://app.binance.com/pay?binanceId=518173796%26amount={monto}%26currency=USDT"
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
             requests.post(url, json={
                 "chat_id": chat_id,
