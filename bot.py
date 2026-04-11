@@ -307,24 +307,9 @@ def commands_loop():
         time.sleep(2)
 
 def monitor_loop():
-    global seen
-    since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
-    for t in fetch_pay_transactions(since):
-        seen.add(t.get("orderId") or str(t))
-    print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
-
+    print("[bot] Monitor de Pay desactivado. Usa /balance para ver tu saldo.")
     while True:
-        if bot_activo:
-            since = int(time.time() * 1000) - 2 * 60 * 1000
-            for t in fetch_pay_transactions(since):
-                uid = t.get("orderId") or str(t)
-                with lock:
-                    if uid not in seen:
-                        seen.add(uid)
-                        send_telegram(fmt_pay(t))
-                        direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
-                        print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
-        time.sleep(POLL_INTERVAL)
+        time.sleep(60)
 
 def main():
     send_telegram(
