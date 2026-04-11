@@ -58,7 +58,9 @@ def get_updates(offset):
 
 def fmt_time(ms):
     try:
-        return datetime.fromtimestamp(int(ms) / 1000).strftime("%d/%m/%Y %H:%M:%S")
+        from datetime import timezone, timedelta
+        tz_colombia = timezone(timedelta(hours=-5))
+        return datetime.fromtimestamp(int(ms) / 1000, tz=tz_colombia).strftime("%d/%m/%Y %H:%M:%S")
     except:
         return str(ms)
 
