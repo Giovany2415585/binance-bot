@@ -165,7 +165,8 @@ def get_menu_markup():
                 {"text": "🧹 Limpiar historial", "callback_data": "/limpiar"}
             ],
             [
-                {"text": "💱 Dólar en COP", "callback_data": "/dolar"}
+                {"text": "💱 Dólar en COP", "callback_data": "/dolar"},
+                {"text": "📊 Resumen hoy", "callback_data": "/resumen"}
             ],
             
         ]
@@ -310,6 +311,28 @@ def handle_command(text, chat_id):
             }, timeout=10)
         except:
             send_telegram("❌ Formato incorrecto. Usa: <code>/monto 50</code>", chat_id=chat_id)
+    elif text == "/resumen":
+        try:
+            hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            since = int(hoy.timestamp() * 1000)
+            txs = fetch_pay_transactions(since, limit=100)
+            ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t))
+            salido = sum(float(t.get("amount", 0)) for t in txs if not is_incoming(t))
+            neto = ingresado - salido
+            pagos_in = len([t for t in txs if is_incoming(t)])
+            pagos_out = len([t for t in txs if not is_incoming(t)])
+            signo = "+" if neto >= 0 else ""
+            msg = (
+                f"📊 <b>RESUMEN DE HOY</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💚 <b>Ingresaron:</b> {ingresado:.2f} USDT ({pagos_in} pagos)\n"
+                f"🔴 <b>Salieron:</b> {salido:.2f} USDT ({pagos_out} pagos)\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💰 <b>Neto:</b> {signo}{neto:.2f} USDT"
+            )
+            send_telegram(msg, chat_id=chat_id)
+        except Exception as e:
+            send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
     elif text == "/dolar":
         try:
             r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
