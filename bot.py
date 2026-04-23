@@ -313,7 +313,9 @@ def handle_command(text, chat_id):
             send_telegram("❌ Formato incorrecto. Usa: <code>/monto 50</code>", chat_id=chat_id)
     elif text == "/resumen":
         try:
-            hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            from datetime import timezone, timedelta
+            tz_colombia = timezone(timedelta(hours=-5))
+            hoy = datetime.now(tz=tz_colombia).replace(hour=0, minute=0, second=0, microsecond=0)
             since = int(hoy.timestamp() * 1000)
             txs = fetch_pay_transactions(since, limit=100)
             ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t))
@@ -329,6 +331,7 @@ def handle_command(text, chat_id):
             signo = "+" if neto >= 0 else "-"
             msg = (
                 f"📊 <b>RESUMEN DE HOY</b>\n"
+                f"🕐 {datetime.now(tz=tz_colombia).strftime('%d/%m/%Y %H:%M:%S')}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"💚 <b>Ingresaron:</b> {ingresado:.2f} USDT ({pagos_in} pagos)\n"
                 f"🔴 <b>Salieron:</b> {abs(salido):.2f} USDT ({pagos_out} pagos)\n"
