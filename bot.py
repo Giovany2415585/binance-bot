@@ -319,7 +319,7 @@ def handle_command(text, chat_id):
             since = int(hoy.timestamp() * 1000)
             txs = fetch_pay_transactions(since, limit=100)
             ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t))
-            salido = sum(float(t.get("amount", 0)) for t in txs if not is_incoming(t))
+            salido = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t))
             neto = ingresado - salido
             pagos_in = len([t for t in txs if is_incoming(t)])
             pagos_out = len([t for t in txs if not is_incoming(t)])
