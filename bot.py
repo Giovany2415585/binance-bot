@@ -323,11 +323,6 @@ def handle_command(text, chat_id):
             neto = ingresado - salido
             pagos_in = len([t for t in txs if is_incoming(t)])
             pagos_out = len([t for t in txs if not is_incoming(t)])
-            b = fetch_balance()
-            btc_balance = float(b.get("free", 0)) if b else 0
-            btc_price_data = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=10).json()
-            btc_price = float(btc_price_data.get("price", 0))
-            balance_usdt = btc_balance * btc_price
             neto_real = ingresado - salido
             signo = "+" if neto_real >= 0 else "-"
             msg = (
@@ -337,8 +332,7 @@ def handle_command(text, chat_id):
                 f"💚 <b>Ingresaron:</b> {ingresado:.2f} USDT ({pagos_in} pagos)\n"
                 f"🔴 <b>Salieron:</b> {salido:.2f} USDT ({pagos_out} pagos)\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"💰 <b>Neto:</b> {signo}{abs(neto_real):.2f} USDT\n"
-                f"💼 <b>Balance actual:</b> {balance_usdt:.2f} USDT"
+                f"💰 <b>Neto:</b> {signo}{abs(neto_real):.2f} USDT"
             )
             send_telegram(msg, chat_id=chat_id)
         except Exception as e:
