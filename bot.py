@@ -23,6 +23,7 @@ BASE_URL      = "https://api.binance.com"
 bot_activo = True
 seen       = set()
 lock       = threading.Lock()
+esperando_monto_conversion = {}
 
 def sign(params):
     query = "&".join(f"{k}={v}" for k, v in params.items())
@@ -339,28 +340,15 @@ def handle_command(text, chat_id):
         except Exception as e:
             send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
     elif text == "/convertir":
+        with lock:
+            esperando_monto_conversion[chat_id] = True
         send_telegram(
             "🔄 <b>Convertir USDT a COP</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "Escribe el monto en USDT:\n"
-            "Ejemplo: <code>/cop 100</code>",
+            "¿Cuántos USDT quieres convertir?\n"
+            "Escribe solo el número:",
             chat_id=chat_id
         )
-    elif text.startswith("/cop"):
-        try:
-            monto = float(text.split()[1])
-            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
-            tasa = float(r.json().get("price", 0))
-            total_cop = monto * tasa
-            send_telegram(
-                f"💱 <b>CONVERSIÓN</b>\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💵 <b>{monto:.2f} USDT = {total_cop:,.2f} COP</b>\n"
-                f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
-                chat_id=chat_id
-            )
-        except:
-            send_telegram("❌ Formato incorrecto. Usa: <code>/cop 100</code>", chat_id=chat_id)
     elif text == "/dolar":
         try:
             r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
@@ -399,7 +387,24 @@ def commands_loop():
                 msg = u.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id")
-                if text.startswith("/") and chat_id:
+                if chat_id and esperando_monto_conversion.get(chat_id):
+                    with lock:
+                        esperando_monto_conversion[chat_id] = False
+                    try:
+                        monto = float(text.strip())
+                        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
+                        tasa = float(r.json().get("price", 0))
+                        total_cop = monto * tasa
+                        send_telegram(
+                            f"💱 <b>CONVERSIÓN</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"💵 <b>{monto:.2f} USDT = {total_cop:,.2f} COP</b>\n"
+                            f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
+                            chat_id=chat_id
+                        )
+                    except:
+                        send_telegram("❌ Escribe solo el número. Ejemplo: 100", chat_id=chat_id)
+                elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
                     handle_command(text, chat_id)
 
