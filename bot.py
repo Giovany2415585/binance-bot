@@ -161,12 +161,13 @@ def get_menu_markup():
                 {"text": "✅ Activar notif.",  "callback_data": "/on"},
                 {"text": "⏸ Pausar notif.",   "callback_data": "/off"}
             ],
-            [
-                {"text": "🧹 Limpiar historial", "callback_data": "/limpiar"}
-            ],
+            
             [
                 {"text": "💱 Dólar en COP", "callback_data": "/dolar"},
                 {"text": "📊 Resumen hoy", "callback_data": "/resumen"}
+            ],
+            [
+                {"text": "🔄 Convertir USDT a COP", "callback_data": "/convertir"}
             ],
             
         ]
@@ -337,6 +338,29 @@ def handle_command(text, chat_id):
             send_telegram(msg, chat_id=chat_id)
         except Exception as e:
             send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
+    elif text == "/convertir":
+        send_telegram(
+            "🔄 <b>Convertir USDT a COP</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Escribe el monto en USDT:\n"
+            "Ejemplo: <code>/cop 100</code>",
+            chat_id=chat_id
+        )
+    elif text.startswith("/cop"):
+        try:
+            monto = float(text.split()[1])
+            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
+            tasa = float(r.json().get("price", 0))
+            total_cop = monto * tasa
+            send_telegram(
+                f"💱 <b>CONVERSIÓN</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💵 <b>{monto:.2f} USDT = {total_cop:,.2f} COP</b>\n"
+                f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
+                chat_id=chat_id
+            )
+        except:
+            send_telegram("❌ Formato incorrecto. Usa: <code>/cop 100</code>", chat_id=chat_id)
     elif text == "/dolar":
         try:
             r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
