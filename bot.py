@@ -169,8 +169,8 @@ def get_menu_markup():
                 {"text": "📊 Resumen hoy", "callback_data": "/resumen"}
             ],
             [
-                {"text": "🔄 USDT a COP", "callback_data": "/convertir"},
-                {"text": "🔄 COP a USDT", "callback_data": "/convertircop"}
+                {"text": "🇺🇸 USDT → 🇨🇴 COP", "callback_data": "/convertir"},
+                {"text": "🇨🇴 COP → 🇺🇸 USDT", "callback_data": "/convertircop"}
             ],
             
         ]
