@@ -24,6 +24,7 @@ bot_activo = True
 seen       = set()
 lock       = threading.Lock()
 esperando_monto_conversion = {}
+esperando_monto_cop = {}
 
 def sign(params):
     query = "&".join(f"{k}={v}" for k, v in params.items())
@@ -168,7 +169,8 @@ def get_menu_markup():
                 {"text": "📊 Resumen hoy", "callback_data": "/resumen"}
             ],
             [
-                {"text": "🔄 Convertir USDT a COP", "callback_data": "/convertir"}
+                {"text": "🔄 USDT a COP", "callback_data": "/convertir"},
+                {"text": "🔄 COP a USDT", "callback_data": "/convertircop"}
             ],
             
         ]
@@ -339,6 +341,16 @@ def handle_command(text, chat_id):
             send_telegram(msg, chat_id=chat_id)
         except Exception as e:
             send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
+    elif text == "/convertircop":
+        with lock:
+            esperando_monto_cop[chat_id] = True
+        send_telegram(
+            "🔄 <b>Convertir COP a USDT</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "¿Cuántos COP quieres convertir?\n"
+            "Escribe solo el número:",
+            chat_id=chat_id
+        )
     elif text == "/convertir":
         with lock:
             esperando_monto_conversion[chat_id] = True
@@ -387,7 +399,24 @@ def commands_loop():
                 msg = u.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id")
-                if chat_id and esperando_monto_conversion.get(chat_id):
+                if chat_id and esperando_monto_cop.get(chat_id):
+                    with lock:
+                        esperando_monto_cop[chat_id] = False
+                    try:
+                        monto = float(text.strip().replace(",", "").replace(".", ""))
+                        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
+                        tasa = float(r.json().get("price", 0))
+                        total_usdt = monto / tasa
+                        send_telegram(
+                            f"💱 <b>CONVERSIÓN</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"🇨🇴 <b>{monto:,.0f} COP = {total_usdt:.2f} USDT</b>\n"
+                            f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
+                            chat_id=chat_id
+                        )
+                    except:
+                        send_telegram("❌ Escribe solo el número. Ejemplo: 500000", chat_id=chat_id)
+                elif chat_id and esperando_monto_conversion.get(chat_id):
                     with lock:
                         esperando_monto_conversion[chat_id] = False
                     try:
