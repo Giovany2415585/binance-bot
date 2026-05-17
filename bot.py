@@ -14,7 +14,6 @@ BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "")
 BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "")
 MY_UID           = "518173796"
 
-# ── Seguridad: solo tu chat_id puede usar el bot ───────────────
 AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
 POLL_INTERVAL = 10
@@ -82,7 +81,6 @@ def fetch_pay_transactions(since_ms=None, limit=50):
         print(f"[pay error] {e}")
         return []
 
-# ── FIX: endpoint correcto para balance USDT ──────────────────
 def fetch_balance():
     try:
         data = binance_get("/sapi/v1/asset/wallet/balance", {})
@@ -112,7 +110,6 @@ def get_counterpart_name(t):
         return receiver.get("name") or str(receiver.get("binanceId", "Desconocido"))
 
 def fmt_pay(t):
-    print(f"[debug pay] {json.dumps(t)}")
     incoming    = is_incoming(t)
     monto       = t.get("amount", "?")
     moneda      = t.get("currency", "?")
@@ -146,7 +143,6 @@ def fmt_pay(t):
         msg += f"\n📝 Nota: {nota}"
     return msg
 
-# ── Menú principal con botones inline ─────────────────────────
 def get_menu_markup():
     return {
         "inline_keyboard": [
@@ -166,16 +162,14 @@ def get_menu_markup():
                 {"text": "✅ Activar notif.",  "callback_data": "/on"},
                 {"text": "⏸ Pausar notif.",   "callback_data": "/off"}
             ],
-            
             [
                 {"text": "💱 Dólar en COP", "callback_data": "/dolar"},
-                {"text": "📊 Resumen hoy", "callback_data": "/resumen"}
+                {"text": "📊 Resumen hoy",  "callback_data": "/resumen"}
             ],
             [
                 {"text": "🇺🇸 USDT → 🇨🇴 COP", "callback_data": "/convertir"},
                 {"text": "🇨🇴 COP → 🇺🇸 USDT", "callback_data": "/convertircop"}
-            ],
-            
+            ]
         ]
     }
 
@@ -248,14 +242,12 @@ def cmd_ultimos5():
         msgs.append("─────────────────")
     return "\n".join(msgs)
 
-# ── Verificación de identidad ──────────────────────────────────
 def is_authorized(chat_id):
     return int(chat_id) == AUTHORIZED_CHAT_ID
 
 def handle_command(text, chat_id):
     global bot_activo, seen
 
-    # 🔐 Solo tú puedes usar el bot
     if not is_authorized(chat_id):
         send_telegram("⛔ No autorizado.", chat_id=chat_id)
         return
@@ -285,39 +277,6 @@ def handle_command(text, chat_id):
     elif text == "/estado":
         estado = "✅ <b>Activo</b>" if bot_activo else "⏸ <b>Pausado</b>"
         send_telegram(f"📊 Estado: {estado}", chat_id=chat_id)
-    elif text == "/limpiar":
-        with lock:
-            seen.clear()
-        send_telegram("🧹 <b>Historial borrado.</b>", chat_id=chat_id)
-    elif text == "/cobrar":
-        send_telegram(
-            "💳 <b>Generar cobro</b>\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "Escribe el monto que deseas cobrar:\n"
-            "Ejemplo: <code>/monto 50</code>",
-            chat_id=chat_id
-        )
-    elif text.startswith("/monto"):
-        try:
-            monto = text.split()[1]
-            float(monto)
-            qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=518173796"
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-            requests.post(url, json={
-                "chat_id": chat_id,
-                "photo": qr_url,
-                "caption": (
-                    f"💳 <b>SOLICITUD DE COBRO</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"💰 <b>Monto:</b> {float(monto):.2f} USDT\n"
-                    f"🆔 <b>Binance ID:</b> 518173796\n"
-                    f"👤 <b>Nickname:</b> CINEBOX_NET\n\n"
-                    f"📱 Escanea con Binance App para pagar"
-                ),
-                "parse_mode": "HTML"
-            }, timeout=10)
-        except:
-            send_telegram("❌ Formato incorrecto. Usa: <code>/monto 50</code>", chat_id=chat_id)
     elif text == "/resumen":
         try:
             from datetime import timezone, timedelta
@@ -327,10 +286,9 @@ def handle_command(text, chat_id):
             txs = fetch_pay_transactions(since, limit=100)
             ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t))
             salido = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t))
-            neto = ingresado - salido
+            neto_real = ingresado - salido
             pagos_in = len([t for t in txs if is_incoming(t)])
             pagos_out = len([t for t in txs if not is_incoming(t)])
-            neto_real = ingresado - salido
             signo = "+" if neto_real >= 0 else "-"
             msg = (
                 f"📊 <b>RESUMEN DE HOY</b>\n"
@@ -351,7 +309,8 @@ def handle_command(text, chat_id):
             "🔄 <b>Convertir COP a USDT</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "¿Cuántos COP quieres convertir?\n"
-            "Escribe solo el número:",
+            "Escribe uno o varios números\n"
+            "separados por espacio o por línea:",
             chat_id=chat_id
         )
     elif text == "/convertir":
@@ -361,7 +320,8 @@ def handle_command(text, chat_id):
             "🔄 <b>Convertir USDT a COP</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "¿Cuántos USDT quieres convertir?\n"
-            "Escribe solo el número:",
+            "Escribe uno o varios números\n"
+            "separados por espacio o por línea:",
             chat_id=chat_id
         )
     elif text == "/dolar":
@@ -379,6 +339,15 @@ def handle_command(text, chat_id):
         else:
             send_telegram("Sin transacciones", chat_id=chat_id)
 
+def parse_numeros(text):
+    numeros = []
+    for token in text.replace("\n", " ").split():
+        try:
+            numeros.append(float(token.replace(",", ".")))
+        except:
+            pass
+    return numeros
+
 def commands_loop():
     offset = 0
     print("[commands] Escuchando comandos...")
@@ -388,7 +357,6 @@ def commands_loop():
             for u in updates:
                 offset = u["update_id"] + 1
 
-                # Manejo de botones inline
                 if "callback_query" in u:
                     cb = u["callback_query"]
                     chat_id = cb["message"]["chat"]["id"]
@@ -398,46 +366,43 @@ def commands_loop():
                         handle_command(data, chat_id)
                     continue
 
-                # Manejo de comandos de texto
                 msg = u.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id")
-                if text == "🏠 Menú" and chat_id:
+
+                if not text or not chat_id:
+                    continue
+
+                if text == "🏠 Menú":
                     cmd_ayuda(chat_id)
-                elif chat_id and esperando_monto_cop.get(chat_id):
-                    with lock:
-                        esperando_monto_cop[chat_id] = False
-                    try:
-                        monto = float(text.strip().replace(",", "").replace(".", ""))
-                        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
-                        tasa = float(r.json().get("price", 0))
-                        total_usdt = monto / tasa
-                        send_telegram(
-                            f"💱 <b>CONVERSIÓN</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"🇨🇴 <b>{monto:,.0f} COP = {total_usdt:.2f} USDT</b>\n"
-                            f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
-                            chat_id=chat_id
-                        )
-                    except:
-                        send_telegram("❌ Escribe solo el número. Ejemplo: 500000", chat_id=chat_id)
                 elif chat_id and esperando_monto_conversion.get(chat_id):
                     with lock:
                         esperando_monto_conversion[chat_id] = False
                     try:
-                        monto = float(text.strip())
+                        numeros = parse_numeros(text)
+                        if not numeros:
+                            raise ValueError
                         r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
                         tasa = float(r.json().get("price", 0))
-                        total_cop = monto * tasa
-                        send_telegram(
-                            f"💱 <b>CONVERSIÓN</b>\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"💵 <b>{monto:.2f} USDT = {total_cop:,.2f} COP</b>\n"
-                            f"📈 Tasa: 1 USD = {tasa:,.2f} COP",
-                            chat_id=chat_id
-                        )
+                        lineas = [f"💵 {n:.2f} USDT = {n * tasa:,.2f} COP" for n in numeros]
+                        lineas.append(f"📈 Tasa: 1 USD = {tasa:,.2f} COP")
+                        send_telegram("\n".join(lineas), chat_id=chat_id)
                     except:
-                        send_telegram("❌ Escribe solo el número. Ejemplo: 100", chat_id=chat_id)
+                        send_telegram("❌ Escribe solo números. Ejemplo: 5 10 3", chat_id=chat_id)
+                elif chat_id and esperando_monto_cop.get(chat_id):
+                    with lock:
+                        esperando_monto_cop[chat_id] = False
+                    try:
+                        numeros = parse_numeros(text)
+                        if not numeros:
+                            raise ValueError
+                        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
+                        tasa = float(r.json().get("price", 0))
+                        lineas = [f"🇨🇴 {n:,.0f} COP = {n / tasa:.2f} USDT" for n in numeros]
+                        lineas.append(f"📈 Tasa: 1 USD = {tasa:,.2f} COP")
+                        send_telegram("\n".join(lineas), chat_id=chat_id)
+                    except:
+                        send_telegram("❌ Escribe solo números. Ejemplo: 50000 100000", chat_id=chat_id)
                 elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
                     handle_command(text, chat_id)
