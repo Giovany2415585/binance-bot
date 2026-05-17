@@ -43,10 +43,13 @@ def send_telegram(text, chat_id=None, reply_markup=None):
     payload = {
         "chat_id": chat_id or TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "reply_markup": reply_markup or {
+            "keyboard": [[{"text": "🏠 Menú"}]],
+            "resize_keyboard": True,
+            "persistent": True
+        }
     }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
     requests.post(url, json=payload, timeout=10)
 
 def answer_callback(callback_query_id):
@@ -399,7 +402,9 @@ def commands_loop():
                 msg = u.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id")
-                if chat_id and esperando_monto_cop.get(chat_id):
+                if text == "🏠 Menú" and chat_id:
+                    cmd_ayuda(chat_id)
+                elif chat_id and esperando_monto_cop.get(chat_id):
                     with lock:
                         esperando_monto_cop[chat_id] = False
                     try:
