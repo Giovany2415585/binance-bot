@@ -411,6 +411,39 @@ def commands_loop():
             print(f"[commands error] {e}")
         time.sleep(2)
 
+CINEBOX_BACKEND = "https://cinebox-web-production.up.railway.app"
+
+def notify_cinebox(memo, amount):
+    try:
+        r = requests.post(
+            f"{CINEBOX_BACKEND}/api/checkout/verify-internal",
+            json={"memo": memo, "amount": float(amount)},
+            timeout=15
+        )
+        data = r.json()
+        if data.get("verified"):
+            send_telegram(
+                f"✅ <b>ORDEN ENTREGADA AUTOMATICAMENTE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔖 Memo: <code>{memo}</code>\n"
+                f"💰 Monto: <b>{amount} USDT</b>\n"
+                f"📦 Orden: <code>{data.get('orderId','')}</code>\n"
+                f"📧 Credenciales enviadas al cliente"
+            )
+            print(f"[CINEBOX] Entrega automatica OK — Memo: {memo}")
+        else:
+            send_telegram(
+                f"⚠️ <b>PAGO RECIBIDO SIN ORDEN</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔖 Memo: <code>{memo}</code>\n"
+                f"💰 Monto: <b>{amount} USDT</b>\n"
+                f"❓ No se encontro orden con ese memo"
+            )
+            print(f"[CINEBOX] Memo {memo} sin orden encontrada")
+    except Exception as e:
+        print(f"[CINEBOX] Error notificando backend: {e}")
+        send_telegram(f"❌ <b>Error al entregar orden</b>\nMemo: <code>{memo}</code>\nError: {e}")
+
 def monitor_loop():
     global seen
     since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
@@ -428,6 +461,13 @@ def monitor_loop():
                         send_telegram(fmt_pay(t))
                         direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
                         print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
+                        # Si es pago recibido con memo de 6 digitos → notificar Cinebox
+                        if is_incoming(t):
+                            nota = str(t.get("note", "") or "").strip()
+                            monto = t.get("amount", 0)
+                            if nota.isdigit() and len(nota) == 6:
+                                print(f"[CINEBOX] Memo detectado: {nota} — {monto} USDT")
+                                threading.Thread(target=notify_cinebox, args=(nota, monto), daemon=True).start()
         time.sleep(POLL_INTERVAL)
 
 def main():
