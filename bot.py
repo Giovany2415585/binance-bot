@@ -16,8 +16,9 @@ MY_UID           = "518173796"
 
 AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
-POLL_INTERVAL = 10
-BASE_URL      = "https://api.binance.com"
+POLL_INTERVAL    = 10
+BASE_URL         = "https://api.binance.com"
+CINEBOX_BACKEND  = "https://cinebox-web-production.up.railway.app"
 
 bot_activo = True
 seen       = set()
@@ -411,8 +412,6 @@ def commands_loop():
             print(f"[commands error] {e}")
         time.sleep(2)
 
-CINEBOX_BACKEND = "https://cinebox-web-production.up.railway.app"
-
 def notify_cinebox(memo, amount):
     try:
         r = requests.post(
@@ -437,7 +436,7 @@ def notify_cinebox(memo, amount):
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🔖 Memo: <code>{memo}</code>\n"
                 f"💰 Monto: <b>{amount} USDT</b>\n"
-                f"❓ No se encontro orden con ese memo"
+                f"❓ {data.get('message','No se encontro orden')}"
             )
             print(f"[CINEBOX] Memo {memo} sin orden encontrada")
     except Exception as e:
@@ -461,7 +460,6 @@ def monitor_loop():
                         send_telegram(fmt_pay(t))
                         direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
                         print(f"[{direccion}] {t.get('amount')} {t.get('currency')}")
-                        # Si es pago recibido con memo de 6 digitos → notificar Cinebox
                         if is_incoming(t):
                             nota = str(t.get("note", "") or "").strip()
                             monto = t.get("amount", 0)
