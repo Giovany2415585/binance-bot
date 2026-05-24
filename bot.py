@@ -19,6 +19,7 @@ AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 POLL_INTERVAL    = 10
 BASE_URL         = "https://api.binance.com"
 CINEBOX_BACKEND  = "https://cinebox-web-production.up.railway.app"
+INTERNAL_SECRET  = os.getenv("INTERNAL_SECRET", "cinebox_secret_2026_xK9mP3")
 
 bot_activo = True
 seen       = set()
@@ -416,7 +417,7 @@ def notify_cinebox(memo, amount):
     try:
         r = requests.post(
             f"{CINEBOX_BACKEND}/api/checkout/verify-internal",
-            json={"memo": memo, "amount": float(amount)},
+            json={"memo": memo, "amount": float(amount), "secret": INTERNAL_SECRET},
             timeout=15
         )
         data = r.json()
