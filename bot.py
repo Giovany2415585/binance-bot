@@ -17,6 +17,7 @@ BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "")
 MY_UID           = "518173796"
 HTTP_PORT        = int(os.getenv("PORT", "8080"))
 INTERNAL_SECRET  = os.getenv("INTERNAL_SECRET", "cinebox_secret_2026_xK9mP3")
+CINEBOX_BACKEND  = os.getenv("CINEBOX_BACKEND", "https://cinebox-web-production.up.railway.app")
 
 AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
@@ -326,6 +327,26 @@ def parse_numeros(text):
 
 # ── HTTP Server para verificar Order IDs ───────────────────────
 
+def notify_cinebox_orderid(binance_order_id, monto):
+    try:
+        res = requests.post(
+            f"{CINEBOX_BACKEND}/api/checkout/verify-orderid-internal",
+            json={"binanceOrderId": binance_order_id, "amount": float(monto), "secret": INTERNAL_SECRET},
+            timeout=30
+        )
+        data = res.json()
+        if data.get("verified"):
+            send_telegram(
+                f"✅ <b>Pago entregado automáticamente</b>\n"
+                f"🔖 Order ID: <code>{binance_order_id}</code>\n"
+                f"💰 Monto: {monto} USDT"
+            )
+            print(f"[CINEBOX] Entrega automatica OK — Order ID: {binance_order_id}")
+        else:
+            print(f"[CINEBOX] Order ID {binance_order_id} sin orden encontrada: {data.get('message','')}")
+    except Exception as e:
+        print(f"[CINEBOX] Error: {e}")
+
 def verify_order_id(order_id, monto_esperado):
     """
     Busca el Order ID en las últimas transacciones de Binance.
@@ -442,6 +463,11 @@ def monitor_loop():
                         send_telegram(fmt_pay(t))
                         direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
                         print(f"[{direccion}] {t.get('amount')} {t.get('currency')} — Order ID: {uid}")
+                        if is_incoming(t):
+                            binance_order_id = str(uid).strip()
+                            monto = t.get('amount', 0)
+                            print(f"[CINEBOX] Pago entrante detectado — Order ID: {binance_order_id} — {monto} USDT")
+                            threading.Thread(target=notify_cinebox_orderid, args=(binance_order_id, monto), daemon=True).start()
         time.sleep(POLL_INTERVAL)
 
 # ── Commands loop ──────────────────────────────────────────────
