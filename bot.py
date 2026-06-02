@@ -18,6 +18,7 @@ MY_UID           = "518173796"
 HTTP_PORT        = int(os.getenv("PORT", "8080"))
 INTERNAL_SECRET  = os.getenv("INTERNAL_SECRET", "cinebox_secret_2026_xK9mP3")
 CINEBOX_BACKEND  = os.getenv("CINEBOX_BACKEND", "https://cinebox-web-production.up.railway.app")
+CINEBOX_BACKEND  = os.getenv("CINEBOX_BACKEND", "https://cinebox-web-production.up.railway.app")
 
 AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
