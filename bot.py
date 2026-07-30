@@ -147,8 +147,12 @@ def answer_callback(callback_query_id):
 
 def get_updates(offset):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    r   = requests.get(url, params={"timeout": 5, "offset": offset}, timeout=15)
-    return r.json().get("result", [])
+    try:
+        r = requests.get(url, params={"timeout": 3, "offset": offset}, timeout=8)
+        return r.json().get("result", [])
+    except Exception as e:
+        print(f"[updates error] {e}")
+        return []
 
 def is_authorized(chat_id):
     return int(chat_id) == AUTHORIZED_CHAT_ID
