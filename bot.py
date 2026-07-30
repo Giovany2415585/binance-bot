@@ -505,8 +505,10 @@ def commands_loop():
                 if not text or not chat_id:
                     continue
 
+                if not is_authorized(chat_id):
+                    continue
                 if text == "🏠 Menú":
-                    cmd_ayuda(chat_id)
+                    threading.Thread(target=cmd_ayuda, args=(chat_id,), daemon=True).start()
                 elif chat_id and esperando_monto_conversion.get(chat_id):
                     with lock:
                         esperando_monto_conversion[chat_id] = False
@@ -537,7 +539,7 @@ def commands_loop():
                         send_telegram("❌ Escribe solo números. Ejemplo: 50000 100000", chat_id=chat_id)
                 elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
-                    handle_command(text, chat_id)
+                    threading.Thread(target=handle_command, args=(text, chat_id), daemon=True).start()
 
         except Exception as e:
             print(f"[commands error] {e}")
