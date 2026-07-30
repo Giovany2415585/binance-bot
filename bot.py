@@ -548,6 +548,15 @@ def commands_loop():
 # ── Main ───────────────────────────────────────────────────────
 
 def main():
+    # Eliminar webhook al iniciar para asegurar modo polling
+    try:
+        requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook",
+            timeout=10
+        )
+        print("[bot] Webhook eliminado al iniciar")
+    except:
+        pass
     send_telegram(
         "🤖 <b>Bot de Binance Pay iniciado</b>\n"
         "Monitoreando pagos cada 10 segundos…\n\n"
