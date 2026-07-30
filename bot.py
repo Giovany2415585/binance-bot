@@ -136,7 +136,10 @@ def send_telegram(text, chat_id=None, reply_markup=None):
             "persistent": True
         }
     }
-    requests.post(url, json=payload, timeout=10)
+    try:
+        requests.post(url, json=payload, timeout=15)
+    except Exception as e:
+        print(f"[telegram error] {e}")
 
 def answer_callback(callback_query_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
@@ -144,7 +147,7 @@ def answer_callback(callback_query_id):
 
 def get_updates(offset):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    r   = requests.get(url, params={"timeout": 5, "offset": offset}, timeout=10)
+    r   = requests.get(url, params={"timeout": 5, "offset": offset}, timeout=15)
     return r.json().get("result", [])
 
 def is_authorized(chat_id):
