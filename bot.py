@@ -21,7 +21,7 @@ BASE_URL      = "https://api.binance.com"
 # usado para saber si un pago es entrante o saliente en ESA cuenta.
 _ACCOUNTS_CONFIG = [
     {
-        "label": os.getenv("BINANCE_LABEL",   "Personal"),
+        "label": os.getenv("BINANCE_LABEL",   "CINEBOX.NET"),
         "emoji": os.getenv("BINANCE_EMOJI",   "🏠"),
         "key":   os.getenv("BINANCE_API_KEY", ""),
         "secret": os.getenv("BINANCE_SECRET", ""),
@@ -271,34 +271,34 @@ def handle_command(text, chat_id):
     if text in ("/start", "/ayuda", "🏠 Menú"):
         cmd_ayuda(chat_id)
     elif text == "/balance":
-        send_telegram(cmd_balance(), chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram(cmd_balance(), chat_id=chat_id)
     elif text == "/ultimo":
-        send_telegram(cmd_ultimo(), chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram(cmd_ultimo(), chat_id=chat_id)
     elif text == "/ultimos5":
-        send_telegram(cmd_ultimos(5), chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram(cmd_ultimos(5), chat_id=chat_id)
     elif text == "/recibidos":
-        send_telegram(cmd_recibidos(), chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram(cmd_recibidos(), chat_id=chat_id)
     elif text == "/enviados":
-        send_telegram(cmd_enviados(), chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram(cmd_enviados(), chat_id=chat_id)
     elif text == "/on":
         bot_activo = True
-        send_telegram("✅ Notificaciones activadas.", chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram("✅ Notificaciones activadas.", chat_id=chat_id)
     elif text == "/off":
         bot_activo = False
-        send_telegram("⏸ Notificaciones pausadas.", chat_id=chat_id, reply_markup=get_menu_markup())
+        send_telegram("⏸ Notificaciones pausadas.", chat_id=chat_id)
     elif text == "/estado":
         estado  = "✅ Activo" if bot_activo else "⏸ Pausado"
         cuentas = ", ".join(f"{a['emoji']} {a['label']}" for a in ACCOUNTS) or "ninguna configurada"
         send_telegram(
             f"📊 <b>Estado del bot:</b> {estado}\n"
             f"🔗 <b>Cuentas monitoreadas:</b> {cuentas}",
-            chat_id=chat_id, reply_markup=get_menu_markup()
+            chat_id=chat_id
         )
     elif text == "/dolar":
         try:
             r      = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
             precio = float(r.json().get("price", 0))
-            send_telegram(f"💱 <b>DÓLAR HOY</b>\n━━━━━━━━━━━━━━━━━━\n🇨🇴 <b>1 USD = {precio:,.2f} COP</b>", chat_id=chat_id, reply_markup=get_menu_markup())
+            send_telegram(f"💱 <b>DÓLAR HOY</b>\n━━━━━━━━━━━━━━━━━━\n🇨🇴 <b>1 USD = {precio:,.2f} COP</b>", chat_id=chat_id)
         except:
             send_telegram("❌ No se pudo obtener el precio.", chat_id=chat_id)
     elif text == "/resumen":
@@ -331,7 +331,7 @@ def handle_command(text, chat_id):
             signo = "+" if neto >= 0 else "-"
             lineas.append("━━━━━━━━━━━━━━━━━━")
             lineas.append(f"💰 <b>Neto combinado:</b> {signo}{abs(neto):.2f} USDT")
-            send_telegram("\n".join(lineas), chat_id=chat_id, reply_markup=get_menu_markup())
+            send_telegram("\n".join(lineas), chat_id=chat_id)
         except Exception as e:
             send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
     elif text == "/convertircop":
