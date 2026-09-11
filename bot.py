@@ -6,61 +6,73 @@ import requests
 import threading
 import json
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
 
 # ── Configuración ──────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN",   "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-BINANCE_API_KEY  = os.getenv("BINANCE_API_KEY",  "")
-BINANCE_SECRET   = os.getenv("BINANCE_SECRET",   "")
-MY_UID           = "518173796"
-HTTP_PORT        = int(os.getenv("PORT", "8080"))
-INTERNAL_SECRET  = os.getenv("INTERNAL_SECRET", "cinebox_secret_2026_xK9mP3")
-CINEBOX_BACKEND  = os.getenv("CINEBOX_BACKEND", "https://cinebox-web-production.up.railway.app")
-CINEBOX_BACKEND  = os.getenv("CINEBOX_BACKEND", "https://cinebox-web-production.up.railway.app")
 
 AUTHORIZED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "5800355077"))
 
 POLL_INTERVAL = 10
 BASE_URL      = "https://api.binance.com"
 
+# ── Cuentas de Binance a monitorear ────────────────────────────
+# Cada cuenta tiene sus propias API keys y su propio binanceId (UID),
+# usado para saber si un pago es entrante o saliente en ESA cuenta.
+_ACCOUNTS_CONFIG = [
+    {
+        "label": os.getenv("BINANCE_LABEL",   "Personal"),
+        "emoji": os.getenv("BINANCE_EMOJI",   "🏠"),
+        "key":   os.getenv("BINANCE_API_KEY", ""),
+        "secret": os.getenv("BINANCE_SECRET", ""),
+        "uid":   os.getenv("BINANCE_UID",     "518173796"),
+    },
+    {
+        "label": os.getenv("BINANCE_LABEL_2",   "SHOP-CNBX"),
+        "emoji": os.getenv("BINANCE_EMOJI_2",   "🏪"),
+        "key":   os.getenv("BINANCE_API_KEY_2", ""),
+        "secret": os.getenv("BINANCE_SECRET_2", ""),
+        "uid":   os.getenv("BINANCE_UID_2",     ""),
+    },
+]
+ACCOUNTS = [a for a in _ACCOUNTS_CONFIG if a["key"] and a["secret"]]
+
 bot_activo = True
-seen       = set()
+seen       = {a["label"]: set() for a in ACCOUNTS}
 lock       = threading.Lock()
 esperando_monto_conversion = {}
 esperando_monto_cop        = {}
 
 # ── Binance helpers ────────────────────────────────────────────
 
-def sign(params):
+def sign(secret, params):
     query = "&".join(f"{k}={v}" for k, v in params.items())
-    return hmac.new(BINANCE_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
 
-def binance_get(path, params):
+def binance_get(account, path, params):
     params["timestamp"] = int(time.time() * 1000)
-    params["signature"] = sign(params)
-    headers = {"X-MBX-APIKEY": BINANCE_API_KEY}
+    params["signature"] = sign(account["secret"], params)
+    headers = {"X-MBX-APIKEY": account["key"]}
     r = requests.get(BASE_URL + path, params=params, headers=headers, timeout=10)
     r.raise_for_status()
     return r.json()
 
-def fetch_pay_transactions(since_ms=None, limit=50):
+def fetch_pay_transactions(account, since_ms=None, limit=50):
     try:
         params = {"limit": limit}
         if since_ms:
             params["startTime"] = since_ms
-        data = binance_get("/sapi/v1/pay/transactions", params)
+        data = binance_get(account, "/sapi/v1/pay/transactions", params)
         if isinstance(data, dict):
             return data.get("data", [])
         return []
     except Exception as e:
-        print(f"[pay error] {e}")
+        print(f"[pay error] [{account['label']}] {e}")
         return []
 
-def fetch_balance():
+def fetch_balance(account):
     try:
-        data = binance_get("/sapi/v1/asset/wallet/balance", {})
+        data = binance_get(account, "/sapi/v1/asset/wallet/balance", {})
         if isinstance(data, list):
             for wallet in data:
                 if wallet.get("walletName") == "Funding":
@@ -71,15 +83,15 @@ def fetch_balance():
                     return {"free": str(usdt_total), "locked": "0"}
         return {}
     except Exception as e:
-        print(f"[balance error] {e}")
+        print(f"[balance error] [{account['label']}] {e}")
         return {}
 
-def is_incoming(t):
+def is_incoming(t, account):
     receiver_id = str(t.get("receiverInfo", {}).get("binanceId", ""))
-    return receiver_id == MY_UID
+    return receiver_id == str(account["uid"])
 
-def get_counterpart_name(t):
-    if is_incoming(t):
+def get_counterpart_name(t, account):
+    if is_incoming(t, account):
         payer = t.get("payerInfo", {})
         return payer.get("name") or str(payer.get("binanceId", "Desconocido"))
     else:
@@ -94,11 +106,11 @@ def fmt_time(ms):
     except:
         return str(ms)
 
-def fmt_pay(t):
-    incoming    = is_incoming(t)
+def fmt_pay(t, account):
+    incoming    = is_incoming(t, account)
     monto       = t.get("amount", "?")
     moneda      = t.get("currency", "?")
-    contraparte = get_counterpart_name(t)
+    contraparte = get_counterpart_name(t, account)
     orden       = t.get("orderId", "N/A")
     ts          = t.get("transactionTime", int(time.time() * 1000))
 
@@ -113,6 +125,7 @@ def fmt_pay(t):
 
     msg = (
         f"{emoji} <b>{titulo}</b>\n"
+        f"{account['emoji']} Cuenta: <b>{account['label']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🪙 Moneda: <b>{moneda}</b>\n"
         f"💰 Monto:  <b>{monto}</b>\n"
@@ -121,6 +134,15 @@ def fmt_pay(t):
         f"🔖 Order ID: <code>{str(orden)}</code>"
     )
     return msg
+
+def fetch_all_accounts(since_ms=None, limit=50):
+    """Trae transacciones de todas las cuentas configuradas, cada una etiquetada."""
+    resultado = []
+    for account in ACCOUNTS:
+        for t in fetch_pay_transactions(account, since_ms=since_ms, limit=limit):
+            resultado.append((t, account))
+    resultado.sort(key=lambda pair: pair[0].get("transactionTime", 0), reverse=True)
+    return resultado
 
 # ── Telegram helpers ───────────────────────────────────────────
 
@@ -197,47 +219,52 @@ def cmd_ayuda(chat_id):
     )
 
 def cmd_balance():
-    b = fetch_balance()
-    if not b:
-        return "❌ No se pudo obtener el balance."
-    libre     = float(b.get("free", 0))
-    bloqueado = float(b.get("locked", 0))
-    total     = libre + bloqueado
-    msg = (
-        f"💼 <b>BALANCE ACTUAL</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🪙 <b>USDT disponible:</b> {libre:.2f}\n"
-    )
-    if bloqueado > 0:
-        msg += f"🔒 <b>USDT bloqueado:</b> {bloqueado:.2f}\n"
-    msg += f"💰 <b>Total:</b> {total:.2f} USDT"
-    return msg
+    if not ACCOUNTS:
+        return "❌ No hay cuentas de Binance configuradas."
+    lineas = ["💼 <b>BALANCE ACTUAL</b>", "━━━━━━━━━━━━━━━━━━"]
+    total  = 0.0
+    algun_error = False
+    for account in ACCOUNTS:
+        b = fetch_balance(account)
+        if not b:
+            lineas.append(f"{account['emoji']} <b>{account['label']}:</b> ❌ no disponible")
+            algun_error = True
+            continue
+        libre = float(b.get("free", 0))
+        total += libre
+        lineas.append(f"{account['emoji']} <b>{account['label']}:</b> {libre:.2f} USDT")
+    lineas.append("━━━━━━━━━━━━━━━━━━")
+    lineas.append(f"💰 <b>Total combinado:</b> {total:.2f} USDT")
+    if algun_error:
+        lineas.append("⚠️ Alguna cuenta no pudo consultarse.")
+    return "\n".join(lineas)
 
 def cmd_ultimo():
-    txs = fetch_pay_transactions(limit=1)
-    if not txs:
+    pares = fetch_all_accounts(limit=5)
+    if not pares:
         return "📭 No hay transacciones recientes."
-    return fmt_pay(txs[0])
+    t, account = pares[0]
+    return fmt_pay(t, account)
 
 def cmd_ultimos(n=5):
-    txs = fetch_pay_transactions(limit=n)
-    if not txs:
+    pares = fetch_all_accounts(limit=n)
+    if not pares:
         return "📭 No hay transacciones recientes."
-    return "\n\n".join(fmt_pay(t) for t in txs[:n])
+    return "\n\n".join(fmt_pay(t, account) for t, account in pares[:n])
 
 def cmd_recibidos():
-    txs = fetch_pay_transactions(limit=20)
-    recv = [t for t in txs if is_incoming(t)][:5]
+    pares = fetch_all_accounts(limit=20)
+    recv  = [(t, account) for t, account in pares if is_incoming(t, account)][:5]
     if not recv:
         return "📭 No hay pagos recibidos recientes."
-    return "\n\n".join(fmt_pay(t) for t in recv)
+    return "\n\n".join(fmt_pay(t, account) for t, account in recv)
 
 def cmd_enviados():
-    txs = fetch_pay_transactions(limit=20)
-    sent = [t for t in txs if not is_incoming(t)][:5]
+    pares = fetch_all_accounts(limit=20)
+    sent  = [(t, account) for t, account in pares if not is_incoming(t, account)][:5]
     if not sent:
         return "📭 No hay pagos enviados recientes."
-    return "\n\n".join(fmt_pay(t) for t in sent)
+    return "\n\n".join(fmt_pay(t, account) for t, account in sent)
 
 def handle_command(text, chat_id):
     global bot_activo
@@ -260,8 +287,13 @@ def handle_command(text, chat_id):
         bot_activo = False
         send_telegram("⏸ Notificaciones pausadas.", chat_id=chat_id, reply_markup=get_menu_markup())
     elif text == "/estado":
-        estado = "✅ Activo" if bot_activo else "⏸ Pausado"
-        send_telegram(f"📊 <b>Estado del bot:</b> {estado}", chat_id=chat_id, reply_markup=get_menu_markup())
+        estado  = "✅ Activo" if bot_activo else "⏸ Pausado"
+        cuentas = ", ".join(f"{a['emoji']} {a['label']}" for a in ACCOUNTS) or "ninguna configurada"
+        send_telegram(
+            f"📊 <b>Estado del bot:</b> {estado}\n"
+            f"🔗 <b>Cuentas monitoreadas:</b> {cuentas}",
+            chat_id=chat_id, reply_markup=get_menu_markup()
+        )
     elif text == "/dolar":
         try:
             r      = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=USDTCOP", timeout=10)
@@ -275,23 +307,31 @@ def handle_command(text, chat_id):
             tz_colombia = timezone(timedelta(hours=-5))
             hoy         = datetime.now(tz_colombia).replace(hour=0, minute=0, second=0, microsecond=0)
             since       = int(hoy.timestamp() * 1000)
-            txs         = fetch_pay_transactions(since, limit=100)
-            ingresado   = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t))
-            salido      = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t))
-            neto_real   = ingresado - salido
-            pagos_in    = len([t for t in txs if is_incoming(t)])
-            pagos_out   = len([t for t in txs if not is_incoming(t)])
-            signo       = "+" if neto_real >= 0 else "-"
-            msg = (
-                f"📊 <b>RESUMEN DE HOY</b>\n"
-                f"🕐 {datetime.now(tz_colombia).strftime('%d/%m/%Y %H:%M:%S')}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💚 <b>Ingresaron:</b> {ingresado:.2f} USDT ({pagos_in} pagos)\n"
-                f"🔴 <b>Salieron:</b> {salido:.2f} USDT ({pagos_out} pagos)\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💰 <b>Neto:</b> {signo}{abs(neto_real):.2f} USDT"
-            )
-            send_telegram(msg, chat_id=chat_id, reply_markup=get_menu_markup())
+
+            lineas = [
+                "📊 <b>RESUMEN DE HOY</b>",
+                f"🕐 {datetime.now(tz_colombia).strftime('%d/%m/%Y %H:%M:%S')}",
+                "━━━━━━━━━━━━━━━━━━",
+            ]
+            total_ingresado = 0.0
+            total_salido    = 0.0
+            for account in ACCOUNTS:
+                txs       = fetch_pay_transactions(account, since, limit=100)
+                ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t, account))
+                salido    = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t, account))
+                pagos_in  = len([t for t in txs if is_incoming(t, account)])
+                pagos_out = len([t for t in txs if not is_incoming(t, account)])
+                total_ingresado += ingresado
+                total_salido    += salido
+                lineas.append(f"{account['emoji']} <b>{account['label']}</b>")
+                lineas.append(f"  💚 Ingresaron: {ingresado:.2f} USDT ({pagos_in} pagos)")
+                lineas.append(f"  🔴 Salieron: {salido:.2f} USDT ({pagos_out} pagos)")
+
+            neto  = total_ingresado - total_salido
+            signo = "+" if neto >= 0 else "-"
+            lineas.append("━━━━━━━━━━━━━━━━━━")
+            lineas.append(f"💰 <b>Neto combinado:</b> {signo}{abs(neto):.2f} USDT")
+            send_telegram("\n".join(lineas), chat_id=chat_id, reply_markup=get_menu_markup())
         except Exception as e:
             send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
     elif text == "/convertircop":
@@ -318,9 +358,10 @@ def handle_command(text, chat_id):
         )
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
-        txs   = fetch_pay_transactions(since, limit=3)
-        if txs:
-            send_telegram(f"<code>{json.dumps(txs[0], indent=2)[:3000]}</code>", chat_id=chat_id)
+        pares = fetch_all_accounts(since, limit=3)
+        if pares:
+            t, account = pares[0]
+            send_telegram(f"{account['emoji']} {account['label']}\n<code>{json.dumps(t, indent=2)[:3000]}</code>", chat_id=chat_id)
         else:
             send_telegram("Sin transacciones", chat_id=chat_id)
 
@@ -333,149 +374,31 @@ def parse_numeros(text):
             pass
     return numeros
 
-# ── HTTP Server para verificar Order IDs ───────────────────────
-
-def notify_cinebox_orderid(binance_order_id, monto):
-    try:
-        res = requests.post(
-            f"{CINEBOX_BACKEND}/api/checkout/verify-orderid-internal",
-            json={"binanceOrderId": binance_order_id, "amount": float(monto), "secret": INTERNAL_SECRET},
-            timeout=30
-        )
-        data = res.json()
-        if data.get("verified"):
-            send_telegram(
-                f"✅ <b>Pago entregado automáticamente</b>\n"
-                f"🔖 Order ID: <code>{binance_order_id}</code>\n"
-                f"💰 Monto: {monto} USDT"
-            )
-            print(f"[CINEBOX] Entrega automatica OK — Order ID: {binance_order_id}")
-        else:
-            print(f"[CINEBOX] Order ID {binance_order_id} sin orden encontrada: {data.get('message','')}")
-    except Exception as e:
-        print(f"[CINEBOX] Error: {e}")
-
-def verify_order_id(order_id, monto_esperado):
-    """
-    Busca el Order ID en las últimas transacciones de Binance.
-    Verifica que:
-    1. El Order ID exista exactamente (comparación completa)
-    2. Sea un pago entrante a tu cuenta
-    3. El monto coincida (con tolerancia del 1%)
-    """
-    try:
-        # Buscar en las últimas 24 horas
-        since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
-        txs   = fetch_pay_transactions(since, limit=100)
-
-        for t in txs:
-            tx_order_id = str(t.get("orderId", "")).strip()
-
-            # Comparación EXACTA del Order ID completo
-            if tx_order_id != str(order_id).strip():
-                continue
-
-            # Verificar que sea un pago entrante a tu cuenta
-            if not is_incoming(t):
-                print(f"[VERIFY] Order ID {order_id} encontrado pero NO es entrante")
-                return {"valid": False, "reason": "El pago no fue enviado a esta cuenta"}
-
-            # Verificar monto con tolerancia del 1%
-            monto_real     = float(t.get("amount", 0))
-            monto_esperado = float(monto_esperado)
-            if monto_real < monto_esperado * 0.99:
-                print(f"[VERIFY] Monto insuficiente: recibido {monto_real}, esperado {monto_esperado}")
-                return {
-                    "valid":    False,
-                    "reason":   f"Monto insuficiente: recibido {monto_real} USDT, esperado {monto_esperado} USDT"
-                }
-
-            print(f"[VERIFY] Order ID {order_id} verificado ✅ — Monto: {monto_real} USDT")
-            return {
-                "valid":    True,
-                "orderId":  tx_order_id,
-                "amount":   monto_real,
-                "currency": t.get("currency", "USDT"),
-            }
-
-        print(f"[VERIFY] Order ID {order_id} no encontrado en transacciones recientes")
-        return {"valid": False, "reason": "Order ID no encontrado — verifica que copiaste el número completo"}
-
-    except Exception as e:
-        print(f"[VERIFY] Error: {e}")
-        return {"valid": False, "reason": "Error al verificar con Binance"}
-
-
-class VerifyHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urlparse(self.path)
-
-        if parsed.path == "/health":
-            self._json(200, {"status": "ok"})
-            return
-
-        if parsed.path == "/verify-order":
-            params         = parse_qs(parsed.query)
-            order_id       = params.get("orderId", [None])[0]
-            monto_esperado = params.get("monto",   [None])[0]
-            secret         = params.get("secret",  [None])[0]
-
-            if secret != INTERNAL_SECRET:
-                self._json(401, {"error": "No autorizado"})
-                return
-
-            if not order_id or not monto_esperado:
-                self._json(400, {"error": "orderId y monto son requeridos"})
-                return
-
-            result = verify_order_id(order_id, monto_esperado)
-            self._json(200, result)
-            return
-
-        self._json(404, {"error": "Not found"})
-
-    def _json(self, status, data):
-        body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", len(body))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        print(f"[HTTP] {args[0]} {args[1]}")
-
-
-def http_server_loop():
-    server = HTTPServer(("0.0.0.0", HTTP_PORT), VerifyHandler)
-    print(f"[HTTP] Servidor escuchando en puerto {HTTP_PORT}")
-    server.serve_forever()
-
 # ── Monitor loop ───────────────────────────────────────────────
 
 def monitor_loop():
-    global seen
-    since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
-    for t in fetch_pay_transactions(since):
-        seen.add(t.get("orderId") or str(t))
-    print(f"[bot] Historial previo cargado: {len(seen)} transacciones")
+    if not ACCOUNTS:
+        print("[bot] ⚠️ No hay cuentas de Binance configuradas. Nada que monitorear.")
+        return
+
+    for account in ACCOUNTS:
+        since = int(time.time() * 1000) - 24 * 60 * 60 * 1000
+        for t in fetch_pay_transactions(account, since):
+            seen[account["label"]].add(t.get("orderId") or str(t))
+        print(f"[bot] [{account['label']}] Historial previo cargado: {len(seen[account['label']])} transacciones")
 
     while True:
         if bot_activo:
             since = int(time.time() * 1000) - 2 * 60 * 1000
-            for t in fetch_pay_transactions(since):
-                uid = t.get("orderId") or str(t)
-                with lock:
-                    if uid not in seen:
-                        seen.add(uid)
-                        send_telegram(fmt_pay(t))
-                        direccion = "RECIBIDO" if is_incoming(t) else "ENVIADO"
-                        print(f"[{direccion}] {t.get('amount')} {t.get('currency')} — Order ID: {uid}")
-                        if is_incoming(t):
-                            binance_order_id = str(uid).strip()
-                            monto = t.get('amount', 0)
-                            print(f"[CINEBOX] Pago entrante detectado — Order ID: {binance_order_id} — {monto} USDT")
-                            threading.Thread(target=notify_cinebox_orderid, args=(binance_order_id, monto), daemon=True).start()
+            for account in ACCOUNTS:
+                for t in fetch_pay_transactions(account, since):
+                    uid = t.get("orderId") or str(t)
+                    with lock:
+                        if uid not in seen[account["label"]]:
+                            seen[account["label"]].add(uid)
+                            send_telegram(fmt_pay(t, account))
+                            direccion = "RECIBIDO" if is_incoming(t, account) else "ENVIADO"
+                            print(f"[{direccion}] [{account['label']}] {t.get('amount')} {t.get('currency')} — Order ID: {uid}")
         time.sleep(POLL_INTERVAL)
 
 # ── Commands loop ──────────────────────────────────────────────
@@ -557,17 +480,16 @@ def main():
         print("[bot] Webhook eliminado al iniciar")
     except:
         pass
+
+    cuentas_txt = ", ".join(f"{a['emoji']} {a['label']}" for a in ACCOUNTS) or "⚠️ ninguna configurada"
     send_telegram(
         "🤖 <b>Bot de Binance Pay iniciado</b>\n"
+        f"🔗 Cuentas: {cuentas_txt}\n"
         "Monitoreando pagos cada 10 segundos…\n\n"
         "Toca el botón para ver opciones 👇",
         reply_markup=get_menu_markup()
     )
-    print("[bot] Iniciado.")
-
-    # Servidor HTTP en hilo separado
-    t_http = threading.Thread(target=http_server_loop, daemon=True)
-    t_http.start()
+    print(f"[bot] Iniciado. Cuentas monitoreadas: {cuentas_txt}")
 
     # Comandos Telegram en hilo separado
     t_cmd = threading.Thread(target=commands_loop, daemon=True)
