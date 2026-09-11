@@ -22,14 +22,14 @@ BASE_URL      = "https://api.binance.com"
 _ACCOUNTS_CONFIG = [
     {
         "label": os.getenv("BINANCE_LABEL",   "CINEBOX_NET"),
-        "emoji": os.getenv("BINANCE_EMOJI",   "🏠"),
+        "emoji": os.getenv("BINANCE_EMOJI",   "🟢"),
         "key":   os.getenv("BINANCE_API_KEY", ""),
         "secret": os.getenv("BINANCE_SECRET", ""),
         "uid":   os.getenv("BINANCE_UID",     "518173796"),
     },
     {
         "label": os.getenv("BINANCE_LABEL_2",   "SHOP-CNBX"),
-        "emoji": os.getenv("BINANCE_EMOJI_2",   "🏪"),
+        "emoji": os.getenv("BINANCE_EMOJI_2",   "🟣"),
         "key":   os.getenv("BINANCE_API_KEY_2", ""),
         "secret": os.getenv("BINANCE_SECRET_2", ""),
         "uid":   os.getenv("BINANCE_UID_2",     ""),
@@ -123,9 +123,10 @@ def fmt_pay(t, account):
         titulo = "PAGO ENVIADO"
         quien  = f"👤 Para: <b>{contraparte}</b>"
 
+    banner = f"{account['emoji']}━━━━ {account['label']} ━━━━{account['emoji']}"
     msg = (
+        f"{banner}\n"
         f"{emoji} <b>{titulo}</b>\n"
-        f"{account['emoji']} Cuenta: <b>{account['label']}</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🪙 Moneda: <b>{moneda}</b>\n"
         f"💰 Monto:  <b>{monto}</b>\n"
