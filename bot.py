@@ -21,7 +21,7 @@ BASE_URL      = "https://api.binance.com"
 # usado para saber si un pago es entrante o saliente en ESA cuenta.
 _ACCOUNTS_CONFIG = [
     {
-        "label": os.getenv("BINANCE_LABEL",   "CINEBOX.NET"),
+        "label": os.getenv("BINANCE_LABEL",   "CINEBOX_NET"),
         "emoji": os.getenv("BINANCE_EMOJI",   "🏠"),
         "key":   os.getenv("BINANCE_API_KEY", ""),
         "secret": os.getenv("BINANCE_SECRET", ""),
@@ -266,20 +266,134 @@ def cmd_enviados():
         return "📭 No hay pagos enviados recientes."
     return "\n\n".join(fmt_pay(t, account) for t, account in sent)
 
+def cmd_resumen_texto(account=None):
+    from datetime import timezone, timedelta
+    tz_colombia = timezone(timedelta(hours=-5))
+    hoy         = datetime.now(tz_colombia).replace(hour=0, minute=0, second=0, microsecond=0)
+    since       = int(hoy.timestamp() * 1000)
+    cuentas     = [account] if account else ACCOUNTS
+
+    lineas = [
+        "📊 <b>RESUMEN DE HOY</b>",
+        f"🕐 {datetime.now(tz_colombia).strftime('%d/%m/%Y %H:%M:%S')}",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+    total_ingresado = 0.0
+    total_salido    = 0.0
+    for acc in cuentas:
+        txs       = fetch_pay_transactions(acc, since, limit=100)
+        ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t, acc))
+        salido    = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t, acc))
+        pagos_in  = len([t for t in txs if is_incoming(t, acc)])
+        pagos_out = len([t for t in txs if not is_incoming(t, acc)])
+        total_ingresado += ingresado
+        total_salido    += salido
+        lineas.append(f"{acc['emoji']} <b>{acc['label']}</b>")
+        lineas.append(f"  💚 Ingresaron: {ingresado:.2f} USDT ({pagos_in} pagos)")
+        lineas.append(f"  🔴 Salieron: {salido:.2f} USDT ({pagos_out} pagos)")
+
+    neto  = total_ingresado - total_salido
+    signo = "+" if neto >= 0 else "-"
+    lineas.append("━━━━━━━━━━━━━━━━━━")
+    etiqueta_neto = "Neto:" if account else "Neto combinado:"
+    lineas.append(f"💰 <b>{etiqueta_neto}</b> {signo}{abs(neto):.2f} USDT")
+    return "\n".join(lineas)
+
+def cmd_ultimo_cuenta(account):
+    txs = fetch_pay_transactions(account, limit=1)
+    if not txs:
+        return f"📭 No hay transacciones recientes en {account['label']}."
+    return fmt_pay(txs[0], account)
+
+def cmd_ultimos_cuenta(account, n=5):
+    txs = fetch_pay_transactions(account, limit=n)
+    if not txs:
+        return f"📭 No hay transacciones recientes en {account['label']}."
+    return "\n\n".join(fmt_pay(t, account) for t in txs[:n])
+
+def cmd_recibidos_cuenta(account):
+    txs  = fetch_pay_transactions(account, limit=20)
+    recv = [t for t in txs if is_incoming(t, account)][:5]
+    if not recv:
+        return f"📭 No hay pagos recibidos recientes en {account['label']}."
+    return "\n\n".join(fmt_pay(t, account) for t in recv)
+
+def cmd_enviados_cuenta(account):
+    txs  = fetch_pay_transactions(account, limit=20)
+    sent = [t for t in txs if not is_incoming(t, account)][:5]
+    if not sent:
+        return f"📭 No hay pagos enviados recientes en {account['label']}."
+    return "\n\n".join(fmt_pay(t, account) for t in sent)
+
+# Acciones que preguntan de cuál cuenta se quiere ver el resultado
+ACCOUNT_ACTIONS = {
+    "/recibidos": "Recibidos",
+    "/enviados":  "Enviados",
+    "/ultimo":    "Último pago",
+    "/ultimos5":  "Últimos 5",
+    "/resumen":   "Resumen de hoy",
+}
+
+def get_account_choice_markup(action):
+    fila = [{"text": f"{a['emoji']} {a['label']}", "callback_data": f"sel:{action}:{a['label']}"} for a in ACCOUNTS]
+    filas = [fila]
+    if len(ACCOUNTS) > 1:
+        filas.append([{"text": "📊 Ambas cuentas", "callback_data": f"sel:{action}:ALL"}])
+    filas.append([{"text": "🔙 Volver al menú", "callback_data": "/start"}])
+    return {"inline_keyboard": filas}
+
+def ejecutar_accion_cuenta(action, account):
+    if action == "/recibidos":
+        return cmd_recibidos_cuenta(account)
+    if action == "/enviados":
+        return cmd_enviados_cuenta(account)
+    if action == "/ultimo":
+        return cmd_ultimo_cuenta(account)
+    if action == "/ultimos5":
+        return cmd_ultimos_cuenta(account, 5)
+    if action == "/resumen":
+        return cmd_resumen_texto(account)
+    return "❌ Acción desconocida."
+
+def ejecutar_accion_combinada(action):
+    if action == "/recibidos":
+        return cmd_recibidos()
+    if action == "/enviados":
+        return cmd_enviados()
+    if action == "/ultimo":
+        return cmd_ultimo()
+    if action == "/ultimos5":
+        return cmd_ultimos(5)
+    if action == "/resumen":
+        return cmd_resumen_texto()
+    return "❌ Acción desconocida."
+
 def handle_command(text, chat_id):
     global bot_activo
     if text in ("/start", "/ayuda", "🏠 Menú"):
         cmd_ayuda(chat_id)
     elif text == "/balance":
         send_telegram(cmd_balance(), chat_id=chat_id)
-    elif text == "/ultimo":
-        send_telegram(cmd_ultimo(), chat_id=chat_id)
-    elif text == "/ultimos5":
-        send_telegram(cmd_ultimos(5), chat_id=chat_id)
-    elif text == "/recibidos":
-        send_telegram(cmd_recibidos(), chat_id=chat_id)
-    elif text == "/enviados":
-        send_telegram(cmd_enviados(), chat_id=chat_id)
+    elif text in ACCOUNT_ACTIONS:
+        titulo = ACCOUNT_ACTIONS[text]
+        send_telegram(
+            f"¿De cuál cuenta quieres ver <b>{titulo}</b>?",
+            chat_id=chat_id,
+            reply_markup=get_account_choice_markup(text)
+        )
+    elif text.startswith("sel:"):
+        try:
+            _, action, choice = text.split(":", 2)
+        except ValueError:
+            return
+        if choice == "ALL":
+            send_telegram(ejecutar_accion_combinada(action), chat_id=chat_id)
+        else:
+            account = next((a for a in ACCOUNTS if a["label"] == choice), None)
+            if not account:
+                send_telegram("❌ Cuenta no encontrada.", chat_id=chat_id)
+            else:
+                send_telegram(ejecutar_accion_cuenta(action, account), chat_id=chat_id)
     elif text == "/on":
         bot_activo = True
         send_telegram("✅ Notificaciones activadas.", chat_id=chat_id)
@@ -301,39 +415,6 @@ def handle_command(text, chat_id):
             send_telegram(f"💱 <b>DÓLAR HOY</b>\n━━━━━━━━━━━━━━━━━━\n🇨🇴 <b>1 USD = {precio:,.2f} COP</b>", chat_id=chat_id)
         except:
             send_telegram("❌ No se pudo obtener el precio.", chat_id=chat_id)
-    elif text == "/resumen":
-        try:
-            from datetime import timezone, timedelta
-            tz_colombia = timezone(timedelta(hours=-5))
-            hoy         = datetime.now(tz_colombia).replace(hour=0, minute=0, second=0, microsecond=0)
-            since       = int(hoy.timestamp() * 1000)
-
-            lineas = [
-                "📊 <b>RESUMEN DE HOY</b>",
-                f"🕐 {datetime.now(tz_colombia).strftime('%d/%m/%Y %H:%M:%S')}",
-                "━━━━━━━━━━━━━━━━━━",
-            ]
-            total_ingresado = 0.0
-            total_salido    = 0.0
-            for account in ACCOUNTS:
-                txs       = fetch_pay_transactions(account, since, limit=100)
-                ingresado = sum(float(t.get("amount", 0)) for t in txs if is_incoming(t, account))
-                salido    = sum(abs(float(t.get("amount", 0))) for t in txs if not is_incoming(t, account))
-                pagos_in  = len([t for t in txs if is_incoming(t, account)])
-                pagos_out = len([t for t in txs if not is_incoming(t, account)])
-                total_ingresado += ingresado
-                total_salido    += salido
-                lineas.append(f"{account['emoji']} <b>{account['label']}</b>")
-                lineas.append(f"  💚 Ingresaron: {ingresado:.2f} USDT ({pagos_in} pagos)")
-                lineas.append(f"  🔴 Salieron: {salido:.2f} USDT ({pagos_out} pagos)")
-
-            neto  = total_ingresado - total_salido
-            signo = "+" if neto >= 0 else "-"
-            lineas.append("━━━━━━━━━━━━━━━━━━")
-            lineas.append(f"💰 <b>Neto combinado:</b> {signo}{abs(neto):.2f} USDT")
-            send_telegram("\n".join(lineas), chat_id=chat_id)
-        except Exception as e:
-            send_telegram("❌ No se pudo obtener el resumen.", chat_id=chat_id)
     elif text == "/convertircop":
         with lock:
             esperando_monto_cop[chat_id] = True
