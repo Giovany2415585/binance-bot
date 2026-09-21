@@ -166,13 +166,23 @@ def send_telegram(text, chat_id=None, reply_markup=None):
 
 def answer_callback(callback_query_id):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery"
-    requests.post(url, json={"callback_query_id": callback_query_id}, timeout=10)
+    try:
+        requests.post(url, json={"callback_query_id": callback_query_id}, timeout=10)
+    except Exception as e:
+        print(f"[answer_callback error] {e}")
 
 def get_updates(offset):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         r = requests.get(url, params={"timeout": 5, "offset": offset}, timeout=20)
-        return r.json().get("result", [])
+        data = r.json()
+        if not data.get("ok", True):
+            # Antes esto se ignoraba en silencio (ej. 409 Conflict si hay OTRA
+            # instancia leyendo el mismo bot) y los botones "no respondían".
+            print(f"[updates NO OK] {data.get('error_code')} {data.get('description')}")
+            time.sleep(3)
+            return []
+        return data.get("result", [])
     except Exception as e:
         print(f"[updates error] {e}")
         time.sleep(3)
@@ -499,9 +509,18 @@ def commands_loop():
                     cb      = u["callback_query"]
                     chat_id = cb["message"]["chat"]["id"]
                     data    = cb.get("data", "")
+                    print(f"[callback] {data!r} chat={chat_id} autorizado={is_authorized(chat_id)}")
                     answer_callback(cb["id"])
                     if is_authorized(chat_id):
-                        handle_command(data, chat_id)
+                        # En hilo aparte (igual que los comandos de texto): si
+                        # Binance tarda, no se congela la escucha de Telegram.
+                        def _run(d=data, c=chat_id):
+                            try:
+                                handle_command(d, c)
+                            except Exception as e:
+                                print(f"[callback error] {d!r}: {e}")
+                                send_telegram("❌ Falló ese botón. Intenta de nuevo.", chat_id=c)
+                        threading.Thread(target=_run, daemon=True).start()
                     continue
 
                 msg     = u.get("message", {})
