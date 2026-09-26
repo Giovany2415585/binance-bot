@@ -42,6 +42,7 @@ seen       = {a["label"]: set() for a in ACCOUNTS}
 lock       = threading.Lock()
 esperando_monto_conversion = {}
 esperando_monto_cop        = {}
+esperando_order_id        = {}
 
 # ── Binance helpers ────────────────────────────────────────────
 
@@ -57,11 +58,13 @@ def binance_get(account, path, params):
     r.raise_for_status()
     return r.json()
 
-def fetch_pay_transactions(account, since_ms=None, limit=50):
+def fetch_pay_transactions(account, since_ms=None, until_ms=None, limit=50):
     try:
         params = {"limit": limit}
         if since_ms:
             params["startTime"] = since_ms
+        if until_ms:
+            params["endTime"] = until_ms
         data = binance_get(account, "/sapi/v1/pay/transactions", params)
         if isinstance(data, dict):
             return data.get("data", [])
@@ -69,6 +72,37 @@ def fetch_pay_transactions(account, since_ms=None, limit=50):
     except Exception as e:
         print(f"[pay error] [{account['label']}] {e}")
         return []
+
+def buscar_order_id(order_id, dias=30):
+    """Busca un Order ID en todas las cuentas, paginando hacia atrás hasta `dias` días."""
+    order_id  = str(order_id).strip()
+    since_lim = int(time.time() * 1000) - dias * 24 * 60 * 60 * 1000
+
+    for account in ACCOUNTS:
+        until_ms = None
+        for _ in range(10):  # tope de páginas para no buscar indefinidamente
+            txs = fetch_pay_transactions(account, since_ms=since_lim, until_ms=until_ms, limit=100)
+            if not txs:
+                break
+            for t in txs:
+                if str(t.get("orderId", "")).strip() == order_id:
+                    return t, account
+            oldest = min(t.get("transactionTime", since_lim) for t in txs)
+            if (until_ms is not None and oldest >= until_ms) or len(txs) < 100:
+                break
+            until_ms = oldest - 1
+    return None, None
+
+def responder_busqueda_orden(order_id, chat_id):
+    order_id = order_id.strip()
+    tx, account = buscar_order_id(order_id)
+    if tx:
+        send_telegram(fmt_pay(tx, account), chat_id=chat_id)
+    else:
+        send_telegram(
+            f"❌ No encontré el Order ID <code>{order_id}</code> en los últimos 30 días, en ninguna cuenta.",
+            chat_id=chat_id
+        )
 
 def fetch_balance(account):
     try:
@@ -217,6 +251,9 @@ def get_menu_markup():
             [
                 {"text": "🇺🇸 USDT → 🇨🇴 COP", "callback_data": "/convertir"},
                 {"text": "🇨🇴 COP → 🇺🇸 USDT", "callback_data": "/convertircop"}
+            ],
+            [
+                {"text": "🔎 Buscar Order ID", "callback_data": "/buscarorden"}
             ]
         ]
     }
@@ -449,6 +486,16 @@ def handle_command(text, chat_id):
             "separados por espacio o por línea:",
             chat_id=chat_id
         )
+    elif text == "/buscarorden":
+        with lock:
+            esperando_order_id[chat_id] = True
+        send_telegram(
+            "🔎 <b>Buscar por Order ID</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Escribe o pega el Order ID que quieres consultar.\n"
+            "Busco en ambas cuentas, en los últimos 30 días:",
+            chat_id=chat_id
+        )
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         pares = fetch_all_accounts(since, limit=3)
@@ -562,6 +609,10 @@ def commands_loop():
                         send_telegram("\n".join(lineas), chat_id=chat_id)
                     except:
                         send_telegram("❌ Escribe solo números. Ejemplo: 50000 100000", chat_id=chat_id)
+                elif chat_id and esperando_order_id.get(chat_id):
+                    with lock:
+                        esperando_order_id[chat_id] = False
+                    threading.Thread(target=responder_busqueda_orden, args=(text, chat_id), daemon=True).start()
                 elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
                     threading.Thread(target=handle_command, args=(text, chat_id), daemon=True).start()
