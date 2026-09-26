@@ -73,12 +73,13 @@ def fetch_pay_transactions(account, since_ms=None, until_ms=None, limit=50):
         print(f"[pay error] [{account['label']}] {e}")
         return []
 
-def buscar_order_id(order_id, dias=30):
-    """Busca un Order ID en todas las cuentas, paginando hacia atrás hasta `dias` días."""
+def buscar_order_id(order_id, scope="ALL", dias=30):
+    """Busca un Order ID en la(s) cuenta(s) indicada(s), paginando hacia atrás hasta `dias` días."""
     order_id  = str(order_id).strip()
     since_lim = int(time.time() * 1000) - dias * 24 * 60 * 60 * 1000
+    cuentas   = ACCOUNTS if scope == "ALL" else [a for a in ACCOUNTS if a["label"] == scope]
 
-    for account in ACCOUNTS:
+    for account in cuentas:
         until_ms = None
         for _ in range(10):  # tope de páginas para no buscar indefinidamente
             txs = fetch_pay_transactions(account, since_ms=since_lim, until_ms=until_ms, limit=100)
@@ -93,14 +94,23 @@ def buscar_order_id(order_id, dias=30):
             until_ms = oldest - 1
     return None, None
 
-def responder_busqueda_orden(order_id, chat_id):
+def get_orden_account_markup():
+    fila  = [{"text": f"{a['emoji']} {a['label']}", "callback_data": f"selorden:{a['label']}"} for a in ACCOUNTS]
+    filas = [fila]
+    if len(ACCOUNTS) > 1:
+        filas.append([{"text": "📊 Ambas cuentas", "callback_data": "selorden:ALL"}])
+    filas.append([{"text": "🔙 Volver al menú", "callback_data": "/start"}])
+    return {"inline_keyboard": filas}
+
+def responder_busqueda_orden(order_id, chat_id, scope="ALL"):
     order_id = order_id.strip()
-    tx, account = buscar_order_id(order_id)
+    tx, account = buscar_order_id(order_id, scope=scope)
     if tx:
         send_telegram(fmt_pay(tx, account), chat_id=chat_id)
     else:
+        alcance = "ambas cuentas" if scope == "ALL" else scope
         send_telegram(
-            f"❌ No encontré el Order ID <code>{order_id}</code> en los últimos 30 días, en ninguna cuenta.",
+            f"❌ No encontré el Order ID <code>{order_id}</code> en los últimos 30 días en {alcance}.",
             chat_id=chat_id
         )
 
@@ -487,15 +497,27 @@ def handle_command(text, chat_id):
             chat_id=chat_id
         )
     elif text == "/buscarorden":
-        with lock:
-            esperando_order_id[chat_id] = True
         send_telegram(
             "🔎 <b>Buscar por Order ID</b>\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "Escribe o pega el Order ID que quieres consultar.\n"
-            "Busco en ambas cuentas, en los últimos 30 días:",
-            chat_id=chat_id
+            "¿En cuál cuenta quieres buscar?",
+            chat_id=chat_id,
+            reply_markup=get_orden_account_markup()
         )
+    elif text.startswith("selorden:"):
+        scope = text.split(":", 1)[1]
+        if scope != "ALL" and not any(a["label"] == scope for a in ACCOUNTS):
+            send_telegram("❌ Cuenta no encontrada.", chat_id=chat_id)
+        else:
+            with lock:
+                esperando_order_id[chat_id] = scope
+            etiqueta = "ambas cuentas" if scope == "ALL" else scope
+            send_telegram(
+                f"🔎 Buscando en <b>{etiqueta}</b>.\n"
+                "Escribe o pega el Order ID que quieres consultar\n"
+                "(últimos 30 días):",
+                chat_id=chat_id
+            )
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         pares = fetch_all_accounts(since, limit=3)
@@ -610,9 +632,10 @@ def commands_loop():
                     except:
                         send_telegram("❌ Escribe solo números. Ejemplo: 50000 100000", chat_id=chat_id)
                 elif chat_id and esperando_order_id.get(chat_id):
+                    scope = esperando_order_id[chat_id]
                     with lock:
                         esperando_order_id[chat_id] = False
-                    threading.Thread(target=responder_busqueda_orden, args=(text, chat_id), daemon=True).start()
+                    threading.Thread(target=responder_busqueda_orden, args=(text, chat_id, scope), daemon=True).start()
                 elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
                     threading.Thread(target=handle_command, args=(text, chat_id), daemon=True).start()
