@@ -43,6 +43,7 @@ lock       = threading.Lock()
 esperando_monto_conversion = {}
 esperando_monto_cop        = {}
 esperando_order_id        = {}
+esperando_fecha            = {}
 
 # ── Binance helpers ────────────────────────────────────────────
 
@@ -113,6 +114,60 @@ def responder_busqueda_orden(order_id, chat_id, scope="ALL"):
             f"❌ No encontré el Order ID <code>{order_id}</code> en los últimos 30 días en {alcance}.",
             chat_id=chat_id
         )
+
+def get_fecha_account_markup(tipo):
+    fila  = [{"text": f"{a['emoji']} {a['label']}", "callback_data": f"selfecha:{tipo}:{a['label']}"} for a in ACCOUNTS]
+    filas = [fila]
+    if len(ACCOUNTS) > 1:
+        filas.append([{"text": "📊 Ambas cuentas", "callback_data": f"selfecha:{tipo}:ALL"}])
+    filas.append([{"text": "🔙 Volver al menú", "callback_data": "/start"}])
+    return {"inline_keyboard": filas}
+
+def parse_fecha_colombia(text):
+    from datetime import timezone, timedelta
+    tz_colombia = timezone(timedelta(hours=-5))
+    texto = text.strip().replace("-", "/").replace(".", "/")
+    partes = texto.split("/")
+    if len(partes) != 3:
+        return None
+    try:
+        dia, mes, anio = partes
+        if len(anio) == 2:
+            anio = "20" + anio
+        fecha = datetime(int(anio), int(mes), int(dia), 0, 0, 0, tzinfo=tz_colombia)
+    except (ValueError, TypeError):
+        return None
+    since_ms = int(fecha.timestamp() * 1000)
+    until_ms = since_ms + 24 * 60 * 60 * 1000 - 1
+    return since_ms, until_ms
+
+def buscar_por_fecha(tipo, scope, since_ms, until_ms):
+    cuentas   = ACCOUNTS if scope == "ALL" else [a for a in ACCOUNTS if a["label"] == scope]
+    resultado = []
+    for account in cuentas:
+        txs = fetch_pay_transactions(account, since_ms=since_ms, until_ms=until_ms, limit=100)
+        for t in txs:
+            incoming = is_incoming(t, account)
+            if (tipo == "recibidos" and incoming) or (tipo == "enviados" and not incoming):
+                resultado.append((t, account))
+    resultado.sort(key=lambda par: par[0].get("transactionTime", 0), reverse=True)
+    return resultado
+
+def responder_busqueda_fecha(fecha_texto, chat_id, tipo, scope):
+    rango = parse_fecha_colombia(fecha_texto)
+    titulo = "recibidos" if tipo == "recibidos" else "enviados"
+    if not rango:
+        send_telegram(
+            "❌ Fecha inválida. Usa el formato <code>DD/MM/AAAA</code> (ejemplo: 25/09/2026).",
+            chat_id=chat_id
+        )
+        return
+    since_ms, until_ms = rango
+    pares = buscar_por_fecha(tipo, scope, since_ms, until_ms)
+    if not pares:
+        send_telegram(f"📭 No hay pagos {titulo} en esa fecha.", chat_id=chat_id)
+        return
+    send_telegram("\n\n".join(fmt_pay(t, account) for t, account in pares), chat_id=chat_id)
 
 def fetch_balance(account):
     try:
@@ -247,16 +302,8 @@ def get_menu_markup():
                 {"text": "🔴 Enviados",    "callback_data": "/enviados"}
             ],
             [
-                {"text": "🔔 Último pago", "callback_data": "/ultimo"},
-                {"text": "📊 Estado",      "callback_data": "/estado"}
-            ],
-            [
-                {"text": "✅ Activar notif.",  "callback_data": "/on"},
-                {"text": "⏸ Pausar notif.",   "callback_data": "/off"}
-            ],
-            [
-                {"text": "💱 Dólar en COP", "callback_data": "/dolar"},
-                {"text": "📊 Resumen hoy",  "callback_data": "/resumen"}
+                {"text": "🔔 Último pago",  "callback_data": "/ultimo"},
+                {"text": "💱 Dólar en COP", "callback_data": "/dolar"}
             ],
             [
                 {"text": "🇺🇸 USDT → 🇨🇴 COP", "callback_data": "/convertir"},
@@ -264,6 +311,10 @@ def get_menu_markup():
             ],
             [
                 {"text": "🔎 Buscar Order ID", "callback_data": "/buscarorden"}
+            ],
+            [
+                {"text": "📅 Recibidos por fecha", "callback_data": "/fecharecibidos"},
+                {"text": "📅 Enviados por fecha",  "callback_data": "/fechaenviados"}
             ]
         ]
     }
@@ -518,6 +569,34 @@ def handle_command(text, chat_id):
                 "(últimos 30 días):",
                 chat_id=chat_id
             )
+    elif text in ("/fecharecibidos", "/fechaenviados"):
+        tipo   = "recibidos" if text == "/fecharecibidos" else "enviados"
+        titulo = "Recibidos" if tipo == "recibidos" else "Enviados"
+        send_telegram(
+            f"📅 <b>Buscar {titulo} por fecha</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "¿En cuál cuenta quieres buscar?",
+            chat_id=chat_id,
+            reply_markup=get_fecha_account_markup(tipo)
+        )
+    elif text.startswith("selfecha:"):
+        try:
+            _, tipo, scope = text.split(":", 2)
+        except ValueError:
+            return
+        if scope != "ALL" and not any(a["label"] == scope for a in ACCOUNTS):
+            send_telegram("❌ Cuenta no encontrada.", chat_id=chat_id)
+        else:
+            with lock:
+                esperando_fecha[chat_id] = f"{tipo}:{scope}"
+            etiqueta = "ambas cuentas" if scope == "ALL" else scope
+            titulo   = "recibidos" if tipo == "recibidos" else "enviados"
+            send_telegram(
+                f"📅 Buscando {titulo} en <b>{etiqueta}</b>.\n"
+                "Escribe la fecha en formato <code>DD/MM/AAAA</code>\n"
+                "(ejemplo: 25/09/2026):",
+                chat_id=chat_id
+            )
     elif text == "/debug":
         since = int(time.time() * 1000) - 7 * 24 * 60 * 60 * 1000
         pares = fetch_all_accounts(since, limit=3)
@@ -636,6 +715,12 @@ def commands_loop():
                     with lock:
                         esperando_order_id[chat_id] = False
                     threading.Thread(target=responder_busqueda_orden, args=(text, chat_id, scope), daemon=True).start()
+                elif chat_id and esperando_fecha.get(chat_id):
+                    estado_fecha = esperando_fecha[chat_id]
+                    with lock:
+                        esperando_fecha[chat_id] = False
+                    tipo, _, scope = estado_fecha.partition(":")
+                    threading.Thread(target=responder_busqueda_fecha, args=(text, chat_id, tipo, scope), daemon=True).start()
                 elif text.startswith("/") and chat_id:
                     print(f"[cmd] {text} from {chat_id}")
                     threading.Thread(target=handle_command, args=(text, chat_id), daemon=True).start()
