@@ -170,17 +170,20 @@ def responder_busqueda_fecha(fecha_texto, chat_id, tipo, scope):
     send_telegram("\n\n".join(fmt_pay(t, account) for t, account in pares), chat_id=chat_id)
 
 def fetch_balance(account):
+    """Devuelve {"total": USDT, "wallets": [(nombre, USDT), ...]} con todas las billeteras con saldo."""
     try:
         data = binance_get(account, "/sapi/v1/asset/wallet/balance", {})
-        if isinstance(data, list):
-            for wallet in data:
-                if wallet.get("walletName") == "Funding":
-                    btc_balance = float(wallet.get("balance", 0))
-                    price_data  = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=10).json()
-                    btc_price   = float(price_data.get("price", 0))
-                    usdt_total  = btc_balance * btc_price
-                    return {"free": str(usdt_total), "locked": "0"}
-        return {}
+        if not isinstance(data, list):
+            return {}
+        price_data = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=10).json()
+        btc_price  = float(price_data.get("price", 0))
+        wallets = []
+        for wallet in data:
+            usdt = float(wallet.get("balance", 0)) * btc_price
+            if usdt >= 0.01:
+                wallets.append((wallet.get("walletName", "?"), usdt))
+        wallets.sort(key=lambda w: w[1], reverse=True)
+        return {"total": sum(u for _, u in wallets), "wallets": wallets}
     except Exception as e:
         print(f"[balance error] [{account['label']}] {e}")
         return {}
@@ -340,9 +343,8 @@ def cmd_balance():
             lineas.append(f"{account['emoji']} <b>{account['label']}:</b> ❌ no disponible")
             algun_error = True
             continue
-        libre = float(b.get("free", 0))
-        total += libre
-        lineas.append(f"{account['emoji']} <b>{account['label']}:</b> {libre:.2f} USDT")
+        total += b["total"]
+        lineas.append(f"{account['emoji']} <b>{account['label']}:</b> {b['total']:.2f} USDT")
     lineas.append("━━━━━━━━━━━━━━━━━━")
     lineas.append(f"💰 <b>Total combinado:</b> {total:.2f} USDT")
     if algun_error:
